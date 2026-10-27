@@ -123,6 +123,44 @@ namespace GoodCube.ApcDeck {
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
 
+        [DllImport("user32.dll")]
+        public static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        public static IntPtr FindWindowByTitle(string exactTitle) {
+            if (string.IsNullOrEmpty(exactTitle)) return IntPtr.Zero;
+            IntPtr found = IntPtr.Zero;
+            EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+                var sb = new System.Text.StringBuilder(256);
+                if (GetWindowText(hWnd, sb, 256) > 0) {
+                    string t = sb.ToString();
+                    if (string.Equals(t, exactTitle, StringComparison.OrdinalIgnoreCase) ||
+                        t.IndexOf("Akai APC Key 25 Stream Deck Controller", StringComparison.OrdinalIgnoreCase) >= 0) {
+                        found = hWnd;
+                        if (IsWindowVisible(hWnd)) return false; // Prefer visible match immediately
+                    }
+                }
+                return true;
+            }, IntPtr.Zero);
+            return found;
+        }
+
+        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_SHOWWINDOW = 0x0040;
+
         private const uint CALLBACK_FUNCTION = 0x00030000;
         private const uint MIM_DATA = 0x3C3;
         private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
@@ -142,8 +180,12 @@ namespace GoodCube.ApcDeck {
 
         public static void BringFormToFront(IntPtr formHandle) {
             if (formHandle == IntPtr.Zero) return;
+            // Calling ShowWindow twice ensures Win32 STARTUPINFO.wShowWindow (SW_HIDE from wscript) is consumed on the first call
+            ShowWindow(formHandle, 1); // SW_SHOWNORMAL
             ShowWindow(formHandle, 9); // SW_RESTORE
             ShowWindow(formHandle, 5); // SW_SHOW
+            SetWindowPos(formHandle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SetWindowPos(formHandle, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
             SetForegroundWindow(formHandle);
         }
 
@@ -203,21 +245,29 @@ namespace GoodCube.ApcDeck {
 
         public static string OpenDevice(string namePattern) {
             CloseDevice();
-            int inIdx = FindMidiInIndex(namePattern);
-            if (inIdx < 0) return "MIDI Input device matching '" + namePattern + "' not found.";
-            uint rcIn = midiInOpen(out _hMidiIn, (uint)inIdx, _callbackDelegate, IntPtr.Zero, CALLBACK_FUNCTION);
-            if (rcIn != 0) {
-                _hMidiIn = IntPtr.Zero;
-                return "midiInOpen failed with code " + rcIn + " (check if another app holds exclusive MIDI access).";
-            }
-            midiInStart(_hMidiIn);
+            string result = "OK";
+            var task = System.Threading.Tasks.Task.Run(() => {
+                int inIdx = FindMidiInIndex(namePattern);
+                if (inIdx < 0) {
+                    result = "MIDI Input device matching '" + namePattern + "' not found.";
+                    return;
+                }
+                uint rcIn = midiInOpen(out _hMidiIn, (uint)inIdx, _callbackDelegate, IntPtr.Zero, CALLBACK_FUNCTION);
+                if (rcIn != 0) {
+                    _hMidiIn = IntPtr.Zero;
+                    result = "midiInOpen failed with code " + rcIn + " (check if another app holds exclusive MIDI access).";
+                    return;
+                }
+                midiInStart(_hMidiIn);
 
-            int outIdx = FindMidiOutIndex(namePattern);
-            if (outIdx >= 0) {
-                uint rcOut = midiOutOpen(out _hMidiOut, (uint)outIdx, IntPtr.Zero, IntPtr.Zero, 0);
-                if (rcOut != 0) _hMidiOut = IntPtr.Zero;
-            }
-            return "OK";
+                int outIdx = FindMidiOutIndex(namePattern);
+                if (outIdx >= 0) {
+                    uint rcOut = midiOutOpen(out _hMidiOut, (uint)outIdx, IntPtr.Zero, IntPtr.Zero, 0);
+                    if (rcOut != 0) _hMidiOut = IntPtr.Zero;
+                }
+            });
+            task.Wait(1500);
+            return result;
         }
 
         public static void SendPadLed(int note, int velocity, int channel = 0) {
@@ -234,20 +284,25 @@ namespace GoodCube.ApcDeck {
         }
 
         public static void CloseDevice() {
-            if (_hMidiIn != IntPtr.Zero) {
-                try {
-                    midiInStop(_hMidiIn);
-                    midiInReset(_hMidiIn);
-                    midiInClose(_hMidiIn);
-                } catch { }
-                _hMidiIn = IntPtr.Zero;
-            }
-            if (_hMidiOut != IntPtr.Zero) {
-                try {
-                    midiOutClose(_hMidiOut);
-                } catch { }
-                _hMidiOut = IntPtr.Zero;
-            }
+            IntPtr hIn = _hMidiIn;
+            IntPtr hOut = _hMidiOut;
+            _hMidiIn = IntPtr.Zero;
+            _hMidiOut = IntPtr.Zero;
+            var task = System.Threading.Tasks.Task.Run(() => {
+                if (hIn != IntPtr.Zero) {
+                    try {
+                        midiInStop(hIn);
+                        midiInReset(hIn);
+                        midiInClose(hIn);
+                    } catch { }
+                }
+                if (hOut != IntPtr.Zero) {
+                    try {
+                        midiOutClose(hOut);
+                    } catch { }
+                }
+            });
+            task.Wait(600);
             MidiEventRecord dummy;
             while (EventQueue.TryDequeue(out dummy)) { }
         }

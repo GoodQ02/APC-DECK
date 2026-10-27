@@ -48,7 +48,9 @@ if ($Mode -eq 'Snapshot') {
     exit 0
 }
 
-# Single-instance check: if APC-DECK is already running, signal it to pop its window to the front
+# Single-instance check: if APC-DECK is already running, signal it to pop its window to the front.
+# If the existing instance is unresponsive or windowless, automatically self-heal and replace it.
+$windowTitle = 'GOOD-CUBE | Akai APC Key 25 Stream Deck Controller & Mapper'
 $instanceMutex = [Threading.Mutex]::new($false, $mutexName)
 $ownsMutex = $false
 try {
@@ -62,8 +64,37 @@ if (-not $ownsMutex) {
         [void]$existingShow.Set()
         $existingShow.Dispose()
     } catch { }
-    $instanceMutex.Dispose()
-    exit 0
+
+    $restoredExisting = $false
+    for ($i = 0; $i -lt 45; $i++) {
+        Start-Sleep -Milliseconds 100
+        $existingHwnd = [GoodCube.ApcDeck.NativeBridge]::FindWindowByTitle($windowTitle)
+        if ($existingHwnd -ne [IntPtr]::Zero) {
+            [GoodCube.ApcDeck.NativeBridge]::BringFormToFront($existingHwnd)
+            if ([GoodCube.ApcDeck.NativeBridge]::IsWindowVisible($existingHwnd)) {
+                $restoredExisting = $true
+                break
+            }
+        }
+    }
+
+    if ($restoredExisting) {
+        $instanceMutex.Dispose()
+        exit 0
+    }
+
+    # Stale/windowless instance detected: terminate it and claim the mutex for a fresh window
+    Get-CimInstance Win32_Process | Where-Object {
+        $_.ProcessId -ne $PID -and $_.CommandLine -match 'Open-ApcDeck\.ps1'
+    } | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 150
+    try {
+        $ownsMutex = $instanceMutex.WaitOne(1000)
+    } catch [Threading.AbandonedMutexException] {
+        $ownsMutex = $true
+    }
 }
 
 $showEvent = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::AutoReset, $showEventName)
@@ -830,10 +861,26 @@ $miExit.Add_Click({
     $form.Close()
 })
 
+$script:InitialShowCompleted = $false
+
 # High-speed 60Hz MIDI Polling Timer (16ms interval for instant, lag-free knobs & pads)
 $midiTimer = [Windows.Forms.Timer]::new()
 $midiTimer.Interval = 16
 $midiTimer.Add_Tick({
+    if (-not $script:InitialShowCompleted) {
+        $script:InitialShowCompleted = $true
+        if ($Minimized) {
+            $form.Hide()
+        } else {
+            Restore-MainWindow
+        }
+        if ($SmokeTestUi) {
+            [Console]::WriteLine("SMOKE_UI_OK: Handle=$($form.Handle) Visible=$([GoodCube.ApcDeck.NativeBridge]::IsWindowVisible($form.Handle)) Title=$($form.Text) MidiOpen=$([GoodCube.ApcDeck.NativeBridge]::IsOpen)")
+            $form.Close()
+            return
+        }
+    }
+
     # Check single-instance wake-up or stop signals
     if ($stopEvent.WaitOne(0)) {
         $form.Close()
@@ -950,33 +997,29 @@ $syncTimer.Add_Tick({
     }
 })
 
-$form.Add_Shown({
+$form.Add_Load({
     Select-ApcControl 'Pad_32'
     Set-StatusBanner "Ready. Turn any knob (K1–K8), press any pad, or press any piano key on your Akai APC Key 25."
-    $midiTimer.Start()
-    $syncTimer.Start()
-    if ($Minimized) {
-        $form.Hide()
-    } else {
+    if (-not $Minimized) {
         Restore-MainWindow
     }
-    if ($SmokeTestUi) {
-        [Console]::WriteLine("SMOKE_UI_OK: Handle=$($form.Handle) Visible=$($form.Visible) Title=$($form.Text) MidiOpen=$([GoodCube.ApcDeck.NativeBridge]::IsOpen)")
-        $form.Close()
-    }
+    $midiTimer.Start()
+    $syncTimer.Start()
 })
 
-$form.Add_FormClosed({
-    $midiTimer.Stop(); $midiTimer.Dispose()
-    $syncTimer.Stop(); $syncTimer.Dispose()
-    $trayIcon.Visible = $false; $trayIcon.Dispose()
-    [GoodCube.ApcDeck.NativeBridge]::ClearAllPadLeds()
-    [GoodCube.ApcDeck.NativeBridge]::CloseDevice()
-    $showEvent.Dispose()
-    $stopEvent.Dispose()
+try {
+    [Windows.Forms.Application]::Run($form)
+} finally {
     try { $instanceMutex.ReleaseMutex() } catch { }
-    $instanceMutex.Dispose()
-})
-
-[void]$form.ShowDialog()
-$form.Dispose()
+    try { $instanceMutex.Dispose() } catch { }
+    try { $midiTimer.Stop(); $midiTimer.Dispose() } catch { }
+    try { $syncTimer.Stop(); $syncTimer.Dispose() } catch { }
+    try { $trayIcon.Visible = $false; $trayIcon.Dispose() } catch { }
+    try { [GoodCube.ApcDeck.NativeBridge]::ClearAllPadLeds() } catch { }
+    try { [GoodCube.ApcDeck.NativeBridge]::CloseDevice() } catch { }
+    try { $showEvent.Dispose() } catch { }
+    try { $stopEvent.Dispose() } catch { }
+    try { $form.Dispose() } catch { }
+    [Console]::Out.Flush()
+    [Environment]::Exit(0)
+}
