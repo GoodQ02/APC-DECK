@@ -94,10 +94,14 @@ if ($snap.ControlCount -ne 90) {
     throw "Snapshot reported unexpected ControlCount: $($snap.ControlCount)"
 }
 
-# 5. Verify native WinForms UI window rendering & MIDI connection smoke test
+# 5. Verify native WinForms UI window rendering, MIDI connection & knob sweep latency gate (< 500 ms across 8 knobs)
 $smokeOut = & pwsh.exe -NoLogo -NoProfile -STA -File (Join-Path $PSScriptRoot 'Open-ApcDeck.ps1') -SmokeTestUi
-if ($smokeOut -notmatch 'SMOKE_UI_OK:\s+Handle=\d+\s+Visible=True') {
+if ($smokeOut -notmatch 'SMOKE_UI_OK:\s+Handle=\d+\s+Visible=True\s+KnobSweepMs=([0-9.]+)') {
     throw "Native WinForms UI smoke test failed: $smokeOut"
 }
+$knobSweepMs = [double]$Matches[1]
+if ($knobSweepMs -gt 500.0) {
+    throw "Knob sweep latency regression detected: ${knobSweepMs}ms exceeds 500ms budget across 8 knobs."
+}
 
-Write-Output "PASS: ApcDeck verified (Controls=$($snap.ControlCount), MidiIn=$($snap.MidiInIndex), MidiOut=$($snap.MidiOutIndex), AudioEndpoints=$($snap.AudioDevices.Count), BluetoothPaired=$($snap.Bluetooth.Count), UI=Visible)"
+Write-Output "PASS: ApcDeck verified (Controls=$($snap.ControlCount), MidiIn=$($snap.MidiInIndex), MidiOut=$($snap.MidiOutIndex), AudioEndpoints=$($snap.AudioDevices.Count), BluetoothPaired=$($snap.Bluetooth.Count), KnobSweepMs=$knobSweepMs, UI=Visible)"

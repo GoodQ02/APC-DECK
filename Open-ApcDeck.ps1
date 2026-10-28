@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Panel','Headless','Snapshot','ResetDefaults','Stop')][string]$Mode = 'Panel',
+    [ValidateSet('Panel','Tray','Headless','Snapshot','ResetDefaults','Stop')][string]$Mode = 'Panel',
     [switch]$Minimized,
     [switch]$SmokeTestUi,
     [string]$SavePreviewPath = ''
@@ -8,6 +8,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ($Mode -eq 'Tray') {
+    $Minimized = $true
+}
 
 Import-Module (Join-Path $PSScriptRoot 'ApcDeck.psm1') -Force -DisableNameChecking
 

@@ -45,6 +45,12 @@ Inspection of type `me.rumkee.bluetooth.monitor.MonitorAction` (`0x02000008`), `
     - `SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string wszDeviceId, int role)` — switches the active Windows default playback or recording device across `eConsole (0)`, `eMultimedia (1)`, and `eCommunications (2)` roles.
     - `SetEndpointVisibility([MarshalAs(UnmanagedType.LPWStr)] string wszDeviceId, [MarshalAs(UnmanagedType.Bool)] bool bVisible)` — enables (`true`) or disables (`false`) an audio endpoint in Windows Sound Settings without requiring administrator elevation.
 
-### 3.2 Runtime Integration in `ApcDeck.psm1`
+### 3.2 Runtime Integration & Four-Tier CoreAudio Caching in `ApcDeck.psm1`
 - Embedded directly inside `GoodCube.ApcDeck.NativeBridge` (`ApcDeck.psm1`) alongside `winmm.dll` (`midiInOpen`, `midiOutOpen`, `midiOutShortMsg`) and `user32.dll` (`keybd_event`).
-- Combined with `$script:EndpointCache` so 60 Hz MIDI CC knob turns update `MasterVolumeLevelScalar` in sub-millisecond time without re-enumerating COM devices on every tick.
+- **Eliminating Windows PnP `IPropertyStore` Latency (`538–802 ms` -> `< 0.2 ms`)**:
+  - In `NAudio.CoreAudioApi.MMDevice`, reading `.FriendlyName` opens the endpoint's Windows PnP `IPropertyStore` and queries `PKEY_Device_FriendlyName`. Across 22 endpoints (`Active`, `Disabled`, `Unplugged`), uncached enumeration takes `538 ms` (`Get-AudioEndpointsSnapshot`) to `802 ms` (`Resolve-AudioEndpoint -IncludeDisabled`).
+  - `ApcDeck.psm1` implements a four-tier CoreAudio cache:
+    1. **`$script:FriendlyNameCache` (`Get-EndpointFriendlyName`)**: Caches `Endpoint.ID -> FriendlyName` so periodic snapshots drop from `538 ms` to `23.9 ms` (`22.5×` faster).
+    2. **`$script:SnapshotDevices`, `$script:DefaultRenderDevice`, `$script:DefaultCaptureDevice`**: Stores live `MMDevice` references during each snapshot so cold cache lookups in `Resolve-AudioEndpoint -UseCache` resolve in memory (`0.005 ms`) without calling `EnumerateAudioEndPoints`.
+    3. **`$script:EndpointCache` & `$script:NegativeEndpointCache`**: Caches resolved `MMDevice` targets by `"$Flow|$IncludeDisabled|$MatchPattern"` for **`0.15 ms – 1.0 ms`** volume updates on 60 Hz MIDI CC knob turns, with a 3-second negative-lookup TTL for unplugged devices and automatic cache eviction on COM `AUDCLNT_E_DEVICE_INVALIDATED` errors.
+    4. **In-Memory Inspector Validation (`Validate-InspectorInput`)**: Matches user target strings against `$script:AudioSnapshot` in `0.01 ms` instead of querying COM on UI selection changes.
