@@ -164,11 +164,17 @@ $cKeyMapped   = [Drawing.Color]::FromArgb(14, 116, 144)
 $cCyanBorder  = [Drawing.Color]::FromArgb(0, 240, 255)
 
 $form = [Windows.Forms.Form]::new()
+$form.AutoScaleMode = [Windows.Forms.AutoScaleMode]::None
 $form.Text = 'GOOD-CUBE | Akai APC Key 25 Stream Deck Controller & Mapper'
-$form.Size = [Drawing.Size]::new(1500, 920)
-$form.MinimumSize = [Drawing.Size]::new(1280, 820)
-$form.StartPosition = 'CenterScreen'
-$form.Font = [Drawing.Font]::new('Segoe UI', 9.5)
+$primWa = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$initW  = [Math]::Min(1660, [Math]::Max(1240, $primWa.Width - 80))
+$initH  = [Math]::Min(960,  [Math]::Max(760,  $primWa.Height - 60))
+$initX  = $primWa.X + [int](($primWa.Width - $initW) / 2)
+$initY  = $primWa.Y + [int](($primWa.Height - $initH) / 2)
+$form.StartPosition = [Windows.Forms.FormStartPosition]::Manual
+$form.Bounds = [Drawing.Rectangle]::new($initX, $initY, $initW, $initH)
+$form.MinimumSize = [Drawing.Size]::new(1180, 740)
+$form.Font = [Drawing.Font]::new('Segoe UI', 9.0)
 $form.BackColor = $cBgDark
 $form.ForeColor = [Drawing.Color]::Gainsboro
 
@@ -565,6 +571,13 @@ $btnRefresh  = New-ActionBtn 'Refresh Devices & Re-Sync Pad LEDs' ([Drawing.Colo
 $btnTray     = New-ActionBtn 'Minimize to System Tray (Keep Active)' ([Drawing.Color]::FromArgb(49, 46, 129))
 $btnReset    = New-ActionBtn 'Reset Entire Profile to Defaults' ([Drawing.Color]::FromArgb(127, 29, 29))
 
+$inspFlow.Add_Resize({
+    $targetW = [Math]::Max(250, $inspFlow.ClientSize.Width - 26)
+    foreach ($ctrl in @($txtLabel, $cmbAction, $cmbTarget1, $cmbTarget2, $cmbLed, $cmbOffLed, $swatchPanel, $btnSave, $btnTest, $btnZeroKnob, $btnClear, $btnRefresh, $btnTray, $btnReset)) {
+        if ($null -ne $ctrl) { $ctrl.Width = $targetW }
+    }
+})
+
 # Bottom Status & Live MIDI Telemetry Bar
 $statusBox = [Windows.Forms.TextBox]::new()
 $statusBox.Dock = 'Fill'
@@ -729,11 +742,23 @@ function Select-ApcControl([string]$cid) {
     Update-SurfaceButtonsVisuals
 }
 
-# Wire surface button clicks
+# Wire surface button clicks (Left-Click selects; Right-Click selects AND tests action immediately)
 foreach ($btn in $script:ControlButtons.Values) {
     $btn.Add_Click({
         $cid = [string]$this.Tag
         Select-ApcControl $cid
+        if ($script:ProfileMap.ContainsKey($cid)) {
+            $m = $script:ProfileMap[$cid]
+            Set-StatusBanner "Selected $cid [$($m.Label)] -> Action=$($m.ActionType) Target='$($m.Target)' LED=$($m.LedColor) (Right-click pad to test action)"
+        }
+    })
+    $btn.Add_MouseUp({
+        param($sender, $e)
+        if ($e.Button -eq [Windows.Forms.MouseButtons]::Right) {
+            $cid = [string]$sender.Tag
+            Select-ApcControl $cid
+            $btnTest.PerformClick()
+        }
     })
 }
 
@@ -852,6 +877,14 @@ $btnReset.Add_Click({
 function Restore-MainWindow {
     $form.Show()
     $form.WindowState = 'Normal'
+    $wa = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $w  = [Math]::Min([Math]::Max($form.Width, 1180), $wa.Width - 40)
+    $h  = [Math]::Min([Math]::Max($form.Height, 740), $wa.Height - 40)
+    if (-not $wa.Contains($form.Bounds)) {
+        $x = $wa.X + [int](($wa.Width - $w) / 2)
+        $y = $wa.Y + [int](($wa.Height - $h) / 2)
+        $form.Bounds = [Drawing.Rectangle]::new($x, $y, $w, $h)
+    }
     $form.Activate()
     [GoodCube.ApcDeck.NativeBridge]::BringFormToFront($form.Handle)
 }
@@ -861,11 +894,11 @@ $trayIcon.Add_DoubleClick({ Restore-MainWindow })
 $miShow.Add_Click({ Restore-MainWindow })
 $miSync.Add_Click({ $btnRefresh.PerformClick() })
 $miBalance.Add_Click({
-    & pwsh.exe -NoLogo -NoProfile -WindowStyle Hidden -File 'C:\Tools\elgato-mcp\Audio-Control.ps1' balance-all
-    Clear-AudioEndpointCache
+    $null = Invoke-ApcAction -Mapping ([pscustomobject]@{ ActionType = 'BalanceAll'; Target = '' })
     $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
     Update-SurfaceButtonsVisuals
+    Set-StatusBanner 'Balanced all workstation outputs & normalized microphones to 95%.'
 })
 $miExit.Add_Click({
     $form.Close()

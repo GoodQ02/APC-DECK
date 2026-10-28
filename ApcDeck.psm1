@@ -273,6 +273,21 @@ namespace GoodCube.ApcDeck {
         private static MidiInProc _callbackDelegate = new MidiInProc(OnMidiIn);
         public static readonly ConcurrentQueue<MidiEventRecord> EventQueue = new ConcurrentQueue<MidiEventRecord>();
 
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+        [DllImport("user32.dll")]
+        public static extern bool BringWindowToTop(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);
+
         public static void HideConsoleWindow() {
             IntPtr cw = GetConsoleWindow();
             if (cw != IntPtr.Zero) {
@@ -282,13 +297,29 @@ namespace GoodCube.ApcDeck {
 
         public static void BringFormToFront(IntPtr formHandle) {
             if (formHandle == IntPtr.Zero) return;
-            // Calling ShowWindow twice ensures Win32 STARTUPINFO.wShowWindow (SW_HIDE from wscript) is consumed on the first call
-            ShowWindow(formHandle, 1); // SW_SHOWNORMAL
-            ShowWindow(formHandle, 9); // SW_RESTORE
-            ShowWindow(formHandle, 5); // SW_SHOW
-            SetWindowPos(formHandle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-            SetWindowPos(formHandle, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-            SetForegroundWindow(formHandle);
+            uint dummyPid = 0;
+            IntPtr fgWnd = GetForegroundWindow();
+            uint fgThread = (fgWnd != IntPtr.Zero) ? GetWindowThreadProcessId(fgWnd, out dummyPid) : 0;
+            uint curThread = GetCurrentThreadId();
+            bool attached = false;
+            if (fgThread != 0 && fgThread != curThread) {
+                attached = AttachThreadInput(fgThread, curThread, true);
+            }
+            try {
+                // Calling ShowWindow twice ensures Win32 STARTUPINFO.wShowWindow (SW_HIDE from wscript) is consumed on the first call
+                ShowWindow(formHandle, 1); // SW_SHOWNORMAL
+                ShowWindow(formHandle, 9); // SW_RESTORE
+                ShowWindow(formHandle, 5); // SW_SHOW
+                SetWindowPos(formHandle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                SetWindowPos(formHandle, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                BringWindowToTop(formHandle);
+                SetForegroundWindow(formHandle);
+                SwitchToThisWindow(formHandle, true);
+            } finally {
+                if (attached) {
+                    AttachThreadInput(fgThread, curThread, false);
+                }
+            }
         }
 
         private static void OnMidiIn(IntPtr hMidiIn, uint wMsg, IntPtr dwInstance, IntPtr dwParam1, IntPtr dwParam2) {
@@ -762,7 +793,20 @@ function Invoke-ApcAction {
             return "$($ep.FriendlyName): $stateText"
         }
         'BalanceAll' {
-            & pwsh.exe -NoLogo -NoProfile -WindowStyle Hidden -File 'C:\Tools\elgato-mcp\Audio-Control.ps1' balance-all
+            try {
+                $enum = Get-SharedEnumerator
+                foreach ($ep in $enum.EnumerateAudioEndPoints([NAudio.CoreAudioApi.DataFlow]::Capture, [NAudio.CoreAudioApi.DeviceState]::Active)) {
+                    try {
+                        $ep.AudioEndpointVolume.MasterVolumeLevelScalar = [float]0.95
+                        $ep.AudioEndpointVolume.Mute = $false
+                    } catch { }
+                }
+                foreach ($ep in $enum.EnumerateAudioEndPoints([NAudio.CoreAudioApi.DataFlow]::Render, [NAudio.CoreAudioApi.DeviceState]::Active)) {
+                    try {
+                        $ep.AudioEndpointVolume.Mute = $false
+                    } catch { }
+                }
+            } catch { }
             Clear-AudioEndpointCache
             return 'Balanced all workstation outputs & normalized microphones to 95%.'
         }
