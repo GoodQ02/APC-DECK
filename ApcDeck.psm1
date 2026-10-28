@@ -479,12 +479,32 @@ namespace GoodCube.ApcDeck {
 }
 
 # Sub-millisecond CoreAudio MMDevice cache for ultra-responsive knob turns
-$script:EndpointCache     = @{}
-$script:SharedEnumerator  = $null
-$script:BtConnectBusy     = $false
+$script:EndpointCache         = @{}
+$script:NegativeEndpointCache = @{}
+$script:FriendlyNameCache     = @{}
+$script:SnapshotDevices       = @()
+$script:DefaultRenderDevice   = $null
+$script:DefaultCaptureDevice  = $null
+$script:LastSentLedVel        = @{}
+$script:SharedEnumerator      = $null
+$script:BtConnectBusy         = $false
 
 function Clear-AudioEndpointCache {
     $script:EndpointCache.Clear()
+    $script:NegativeEndpointCache.Clear()
+    $script:DefaultRenderDevice  = $null
+    $script:DefaultCaptureDevice = $null
+}
+
+function Get-EndpointFriendlyName {
+    param([Parameter(Mandatory)]$Endpoint)
+    $id = $Endpoint.ID
+    if ($script:FriendlyNameCache.ContainsKey($id)) {
+        return $script:FriendlyNameCache[$id]
+    }
+    $fn = try { $Endpoint.FriendlyName } catch { $id }
+    $script:FriendlyNameCache[$id] = $fn
+    return $fn
 }
 
 function Get-SharedEnumerator {
@@ -509,15 +529,21 @@ function Initialize-BluetoothHelper {
 
 function Get-AudioEndpointsSnapshot {
     $enum = Get-SharedEnumerator
-    $defaultOut = try { $enum.GetDefaultAudioEndpoint([NAudio.CoreAudioApi.DataFlow]::Render, [NAudio.CoreAudioApi.Role]::Multimedia).ID } catch { '' }
-    $defaultIn  = try { $enum.GetDefaultAudioEndpoint([NAudio.CoreAudioApi.DataFlow]::Capture, [NAudio.CoreAudioApi.Role]::Communications).ID } catch { '' }
+    $defRenderDev  = try { $enum.GetDefaultAudioEndpoint([NAudio.CoreAudioApi.DataFlow]::Render, [NAudio.CoreAudioApi.Role]::Multimedia) } catch { $null }
+    $defCaptureDev = try { $enum.GetDefaultAudioEndpoint([NAudio.CoreAudioApi.DataFlow]::Capture, [NAudio.CoreAudioApi.Role]::Communications) } catch { $null }
+    $script:DefaultRenderDevice  = $defRenderDev
+    $script:DefaultCaptureDevice = $defCaptureDev
+    $defaultOut = if ($defRenderDev)  { $defRenderDev.ID }  else { '' }
+    $defaultIn  = if ($defCaptureDev) { $defCaptureDev.ID } else { '' }
 
-    $items = [Collections.Generic.List[object]]::new()
+    $items   = [Collections.Generic.List[object]]::new()
+    $devList = [Collections.Generic.List[object]]::new()
     foreach ($flow in @([NAudio.CoreAudioApi.DataFlow]::Render, [NAudio.CoreAudioApi.DataFlow]::Capture)) {
         $eps = $enum.EnumerateAudioEndPoints($flow, [NAudio.CoreAudioApi.DeviceState]::All)
         foreach ($ep in $eps) {
-            $stateStr = $ep.State.ToString()
+            $stateStr = try { $ep.State.ToString() } catch { 'Unknown' }
             if ($stateStr -notin @('Active', 'Disabled', 'Unplugged')) { continue }
+            $fn = Get-EndpointFriendlyName -Endpoint $ep
             $volPct = $null
             $muted  = $false
             if ($stateStr -eq 'Active') {
@@ -526,10 +552,18 @@ function Get-AudioEndpointsSnapshot {
                     $muted  = [bool]$ep.AudioEndpointVolume.Mute
                 } catch { }
             }
+            $flowStr = $flow.ToString()
+            $devList.Add([pscustomobject]@{
+                Device       = $ep
+                ID           = $ep.ID
+                FriendlyName = $fn
+                Flow         = $flowStr
+                State        = $stateStr
+            })
             $items.Add([pscustomobject]@{
                 ID          = $ep.ID
-                FriendlyName= $ep.FriendlyName
-                Flow        = $flow.ToString()
+                FriendlyName= $fn
+                Flow        = $flowStr
                 State       = $stateStr
                 IsDefault   = ($ep.ID -eq $defaultOut -or $ep.ID -eq $defaultIn)
                 VolumePct   = $volPct
@@ -537,6 +571,7 @@ function Get-AudioEndpointsSnapshot {
             })
         }
     }
+    $script:SnapshotDevices = $devList.ToArray()
     return $items.ToArray()
 }
 
@@ -573,24 +608,45 @@ function Resolve-AudioEndpoint {
     )
     if ([string]::IsNullOrWhiteSpace($MatchPattern)) { return $null }
     $cacheKey = "$Flow|$IncludeDisabled|$MatchPattern"
-    if ($UseCache -and $script:EndpointCache.ContainsKey($cacheKey)) {
-        $cached = $script:EndpointCache[$cacheKey]
-        try {
-            if ($cached -and $cached.State.ToString() -eq 'Active') { return $cached }
-        } catch { }
-        [void]$script:EndpointCache.Remove($cacheKey)
+    if ($UseCache) {
+        if ($script:EndpointCache.ContainsKey($cacheKey)) {
+            $cached = $script:EndpointCache[$cacheKey]
+            try {
+                if ($cached -and ($IncludeDisabled -or $cached.State.ToString() -eq 'Active')) { return $cached }
+            } catch { }
+            [void]$script:EndpointCache.Remove($cacheKey)
+        }
+        if ($script:NegativeEndpointCache.ContainsKey($cacheKey)) {
+            $ageMs = [Environment]::TickCount64 - $script:NegativeEndpointCache[$cacheKey]
+            if ($ageMs -lt 3000) { return $null }
+            [void]$script:NegativeEndpointCache.Remove($cacheKey)
+        }
     }
 
     $enum = Get-SharedEnumerator
     if ($MatchPattern -eq '@DefaultRender') {
-        $dev = try { $enum.GetDefaultAudioEndpoint([NAudio.CoreAudioApi.DataFlow]::Render, [NAudio.CoreAudioApi.Role]::Multimedia) } catch { $null }
+        $dev = if ($UseCache -and $script:DefaultRenderDevice) { $script:DefaultRenderDevice }
+               else { try { $enum.GetDefaultAudioEndpoint([NAudio.CoreAudioApi.DataFlow]::Render, [NAudio.CoreAudioApi.Role]::Multimedia) } catch { $null } }
         if ($UseCache -and $dev) { $script:EndpointCache[$cacheKey] = $dev }
         return $dev
     }
     if ($MatchPattern -eq '@DefaultCapture') {
-        $dev = try { $enum.GetDefaultAudioEndpoint([NAudio.CoreAudioApi.DataFlow]::Capture, [NAudio.CoreAudioApi.Role]::Communications) } catch { $null }
+        $dev = if ($UseCache -and $script:DefaultCaptureDevice) { $script:DefaultCaptureDevice }
+               else { try { $enum.GetDefaultAudioEndpoint([NAudio.CoreAudioApi.DataFlow]::Capture, [NAudio.CoreAudioApi.Role]::Communications) } catch { $null } }
         if ($UseCache -and $dev) { $script:EndpointCache[$cacheKey] = $dev }
         return $dev
+    }
+    if ($UseCache -and $script:SnapshotDevices.Count -gt 0) {
+        foreach ($sd in $script:SnapshotDevices) {
+            if (-not $IncludeDisabled -and $sd.State -ne 'Active') { continue }
+            if ($Flow -ne 'All' -and $sd.Flow -ne $Flow) { continue }
+            if ($sd.ID -ieq $MatchPattern -or $sd.FriendlyName -ieq $MatchPattern -or $sd.FriendlyName.IndexOf($MatchPattern, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                $script:EndpointCache[$cacheKey] = $sd.Device
+                return $sd.Device
+            }
+        }
+        $script:NegativeEndpointCache[$cacheKey] = [Environment]::TickCount64
+        return $null
     }
     $stateMask = if ($IncludeDisabled) { [NAudio.CoreAudioApi.DeviceState]::All } else { [NAudio.CoreAudioApi.DeviceState]::Active }
     $flows = if ($Flow -eq 'Render') { @([NAudio.CoreAudioApi.DataFlow]::Render) }
@@ -600,11 +656,15 @@ function Resolve-AudioEndpoint {
     foreach ($f in $flows) {
         $eps = $enum.EnumerateAudioEndPoints($f, $stateMask)
         foreach ($ep in $eps) {
-            if ($ep.ID -ieq $MatchPattern -or $ep.FriendlyName -ieq $MatchPattern -or $ep.FriendlyName.IndexOf($MatchPattern, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            $fn = Get-EndpointFriendlyName -Endpoint $ep
+            if ($ep.ID -ieq $MatchPattern -or $fn -ieq $MatchPattern -or $fn.IndexOf($MatchPattern, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
                 if ($UseCache) { $script:EndpointCache[$cacheKey] = $ep }
                 return $ep
             }
         }
+    }
+    if ($UseCache) {
+        $script:NegativeEndpointCache[$cacheKey] = [Environment]::TickCount64
     }
     return $null
 }
@@ -619,19 +679,23 @@ function Convert-MidiCcToScalar {
 
 function Get-CurrentMappingVolumePct {
     param([pscustomobject]$Mapping)
-    switch ($Mapping.ActionType) {
-        'VolumeMasterOut' {
-            $ep = Resolve-AudioEndpoint -MatchPattern '@DefaultRender' -Flow Render -UseCache
-            if ($ep) { return [int][math]::Round($ep.AudioEndpointVolume.MasterVolumeLevelScalar * 100) }
+    try {
+        switch ($Mapping.ActionType) {
+            'VolumeMasterOut' {
+                $ep = Resolve-AudioEndpoint -MatchPattern '@DefaultRender' -Flow Render -UseCache
+                if ($ep) { return [int][math]::Round($ep.AudioEndpointVolume.MasterVolumeLevelScalar * 100) }
+            }
+            'VolumeDefaultMic' {
+                $ep = Resolve-AudioEndpoint -MatchPattern '@DefaultCapture' -Flow Capture -UseCache
+                if ($ep) { return [int][math]::Round($ep.AudioEndpointVolume.MasterVolumeLevelScalar * 100) }
+            }
+            'VolumeDevice' {
+                $ep = Resolve-AudioEndpoint -MatchPattern $Mapping.Target -Flow All -UseCache
+                if ($ep) { return [int][math]::Round($ep.AudioEndpointVolume.MasterVolumeLevelScalar * 100) }
+            }
         }
-        'VolumeDefaultMic' {
-            $ep = Resolve-AudioEndpoint -MatchPattern '@DefaultCapture' -Flow Capture -UseCache
-            if ($ep) { return [int][math]::Round($ep.AudioEndpointVolume.MasterVolumeLevelScalar * 100) }
-        }
-        'VolumeDevice' {
-            $ep = Resolve-AudioEndpoint -MatchPattern $Mapping.Target -Flow All -UseCache
-            if ($ep) { return [int][math]::Round($ep.AudioEndpointVolume.MasterVolumeLevelScalar * 100) }
-        }
+    } catch {
+        Clear-AudioEndpointCache
     }
     return $null
 }
@@ -646,52 +710,66 @@ function Set-AudioVolumeByMapping {
     $pct = [int][math]::Round($scalar * 100)
     $isZero = ($pct -eq 0)
 
-    switch ($Mapping.ActionType) {
-        'VolumeMasterOut' {
-            $ep = Resolve-AudioEndpoint -MatchPattern '@DefaultRender' -Flow Render -UseCache
-            if ($ep) {
-                $ep.AudioEndpointVolume.MasterVolumeLevelScalar = [float]$scalar
-                if ($AutoMuteAtZero) { $ep.AudioEndpointVolume.Mute = $isZero }
-                return "$($ep.FriendlyName): $pct%$(if($isZero){' (ZEROED/MUTED)'}else{''})"
-            }
-        }
-        'VolumeDefaultMic' {
-            $ep = Resolve-AudioEndpoint -MatchPattern '@DefaultCapture' -Flow Capture -UseCache
-            if ($ep) {
-                $ep.AudioEndpointVolume.MasterVolumeLevelScalar = [float]$scalar
-                if ($AutoMuteAtZero) { $ep.AudioEndpointVolume.Mute = $isZero }
-                return "$($ep.FriendlyName): $pct%$(if($isZero){' (ZEROED/MUTED)'}else{''})"
-            }
-        }
-        'VolumeDevice' {
-            $ep = Resolve-AudioEndpoint -MatchPattern $Mapping.Target -Flow All -UseCache
-            if ($ep) {
-                $ep.AudioEndpointVolume.MasterVolumeLevelScalar = [float]$scalar
-                if ($AutoMuteAtZero) { $ep.AudioEndpointVolume.Mute = $isZero }
-                return "$($ep.FriendlyName): $pct%$(if($isZero){' (ZEROED/MUTED)'}else{''})"
-            }
-            return "Device '$($Mapping.Target)' is not active."
-        }
-        'VolumeApp' {
-            $out = Resolve-AudioEndpoint -MatchPattern '@DefaultRender' -Flow Render -UseCache
-            if ($out) {
-                $sessions = $out.AudioSessionManager.Sessions
-                $matched = 0
-                for ($i = 0; $i -lt $sessions.Count; $i++) {
-                    $s = $sessions[$i]
-                    $procId = [int]$s.GetProcessID
-                    if ($procId -le 0) { continue }
-                    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
-                    if (($proc -and $proc.ProcessName -match [regex]::Escape($Mapping.Target)) -or ($s.DisplayName -and $s.DisplayName -match [regex]::Escape($Mapping.Target))) {
-                        $s.SimpleAudioVolume.Volume = [float]$scalar
-                        if ($AutoMuteAtZero) { $s.SimpleAudioVolume.Mute = $isZero }
-                        $matched++
+    try {
+        switch ($Mapping.ActionType) {
+            'VolumeMasterOut' {
+                $ep = Resolve-AudioEndpoint -MatchPattern '@DefaultRender' -Flow Render -UseCache
+                if ($ep) {
+                    $ep.AudioEndpointVolume.MasterVolumeLevelScalar = [float]$scalar
+                    if ($AutoMuteAtZero -and $ep.AudioEndpointVolume.Mute -ne $isZero) {
+                        $ep.AudioEndpointVolume.Mute = $isZero
                     }
+                    $fn = Get-EndpointFriendlyName -Endpoint $ep
+                    return "${fn}: $pct%$(if($isZero){' (ZEROED/MUTED)'}else{''})"
                 }
-                if ($matched -gt 0) { return "App '$($Mapping.Target)' ($matched session): $pct%" }
             }
-            return "No active audio session for '$($Mapping.Target)'."
+            'VolumeDefaultMic' {
+                $ep = Resolve-AudioEndpoint -MatchPattern '@DefaultCapture' -Flow Capture -UseCache
+                if ($ep) {
+                    $ep.AudioEndpointVolume.MasterVolumeLevelScalar = [float]$scalar
+                    if ($AutoMuteAtZero -and $ep.AudioEndpointVolume.Mute -ne $isZero) {
+                        $ep.AudioEndpointVolume.Mute = $isZero
+                    }
+                    $fn = Get-EndpointFriendlyName -Endpoint $ep
+                    return "${fn}: $pct%$(if($isZero){' (ZEROED/MUTED)'}else{''})"
+                }
+            }
+            'VolumeDevice' {
+                $ep = Resolve-AudioEndpoint -MatchPattern $Mapping.Target -Flow All -UseCache
+                if ($ep) {
+                    $ep.AudioEndpointVolume.MasterVolumeLevelScalar = [float]$scalar
+                    if ($AutoMuteAtZero -and $ep.AudioEndpointVolume.Mute -ne $isZero) {
+                        $ep.AudioEndpointVolume.Mute = $isZero
+                    }
+                    $fn = Get-EndpointFriendlyName -Endpoint $ep
+                    return "${fn}: $pct%$(if($isZero){' (ZEROED/MUTED)'}else{''})"
+                }
+                return "Device '$($Mapping.Target)' is not active."
+            }
+            'VolumeApp' {
+                $out = Resolve-AudioEndpoint -MatchPattern '@DefaultRender' -Flow Render -UseCache
+                if ($out) {
+                    $sessions = $out.AudioSessionManager.Sessions
+                    $matched = 0
+                    for ($i = 0; $i -lt $sessions.Count; $i++) {
+                        $s = $sessions[$i]
+                        $procId = [int]$s.GetProcessID
+                        if ($procId -le 0) { continue }
+                        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+                        if (($proc -and $proc.ProcessName -match [regex]::Escape($Mapping.Target)) -or ($s.DisplayName -and $s.DisplayName -match [regex]::Escape($Mapping.Target))) {
+                            $s.SimpleAudioVolume.Volume = [float]$scalar
+                            if ($AutoMuteAtZero) { $s.SimpleAudioVolume.Mute = $isZero }
+                            $matched++
+                        }
+                    }
+                    if ($matched -gt 0) { return "App '$($Mapping.Target)' ($matched session): $pct%" }
+                }
+                return "No active audio session for '$($Mapping.Target)'."
+            }
         }
+    } catch {
+        Clear-AudioEndpointCache
+        return "Audio device state changed — retrying ($($_.Exception.Message))"
     }
     return "Unmapped knob ($pct%)"
 }
@@ -991,18 +1069,23 @@ function Sync-ApcHardwareLeds {
     param(
         [hashtable]$ProfileMap,
         [object[]]$AudioSnapshot = $null,
-        [object[]]$BtSnapshot = $null
+        [object[]]$BtSnapshot = $null,
+        [switch]$Force
     )
     if (-not [GoodCube.ApcDeck.NativeBridge]::HasMidiOut) { return }
     if ($null -eq $AudioSnapshot) { $AudioSnapshot = Get-AudioEndpointsSnapshot }
     if ($null -eq $BtSnapshot)    { $BtSnapshot = @() }
+    if ($Force) { $script:LastSentLedVel.Clear() }
 
     for ($note = 0; $note -lt 40; $note++) {
         $id = "Pad_$note"
         $vel = if ($ProfileMap.ContainsKey($id)) {
             Get-PadLedVelocity -Mapping $ProfileMap[$id] -AudioSnapshot $AudioSnapshot -BtSnapshot $BtSnapshot
         } else { 0 }
-        [GoodCube.ApcDeck.NativeBridge]::SendPadLed($note, $vel, 0)
+        if ($Force -or (-not $script:LastSentLedVel.ContainsKey($note)) -or $script:LastSentLedVel[$note] -ne $vel) {
+            $script:LastSentLedVel[$note] = $vel
+            [GoodCube.ApcDeck.NativeBridge]::SendPadLed($note, $vel, 0)
+        }
     }
     foreach ($note in @(64..71)) {
         $id = "Track_$note"
@@ -1013,7 +1096,10 @@ function Sync-ApcHardwareLeds {
             elseif ($m.ActionType -ne 'None') { 1 }
             else { 0 }
         } else { 0 }
-        [GoodCube.ApcDeck.NativeBridge]::SendPadLed($note, $vel, 0)
+        if ($Force -or (-not $script:LastSentLedVel.ContainsKey($note)) -or $script:LastSentLedVel[$note] -ne $vel) {
+            $script:LastSentLedVel[$note] = $vel
+            [GoodCube.ApcDeck.NativeBridge]::SendPadLed($note, $vel, 0)
+        }
     }
     foreach ($note in @(82..86)) {
         $id = "Scene_$note"
@@ -1024,7 +1110,10 @@ function Sync-ApcHardwareLeds {
             elseif ($m.ActionType -ne 'None') { 1 }
             else { 0 }
         } else { 0 }
-        [GoodCube.ApcDeck.NativeBridge]::SendPadLed($note, $vel, 0)
+        if ($Force -or (-not $script:LastSentLedVel.ContainsKey($note)) -or $script:LastSentLedVel[$note] -ne $vel) {
+            $script:LastSentLedVel[$note] = $vel
+            [GoodCube.ApcDeck.NativeBridge]::SendPadLed($note, $vel, 0)
+        }
     }
 }
 
