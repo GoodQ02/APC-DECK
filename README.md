@@ -2,9 +2,9 @@
 
 Native Windows visual controller, hardware LED synchronizer, and Stream Deck–style action mapper for the **Akai Professional APC Key 25** (`USB\VID_09E8&PID_0027`).
 
-![APC-DECK Icon](assets/apc-deck.png)
+![APC-DECK 1:1 Hardware Twin UI](assets/apc-deck-ui.png)
 
-`APC-DECK` turns all **87 physical controls** on the Akai APC Key 25—**8 rotary knobs (`K1`–`K8`)**, **40 RGB clip-launch pads (`5×8` matrix)**, **6 scene buttons**, **8 track/mode buttons**, and **25 synth-action piano keys (`C3`–`C5`)**—into a zero-latency audio mixer, device router, Bluetooth wake-up controller, and hotkey macro surface.
+`APC-DECK` turns all **90 mappable physical controls** on the Akai APC Key 25—**8 rotary knobs (`K1`–`K8` in a `2×4` bank)**, **40 RGB clip-launch pads (`5×8` matrix)**, **6 circular scene launch buttons**, **8 circular track/knob-control buttons**, **3 transport/shift buttons (`PLAY/PAUSE`, `REC`, `SHIFT`)**, and **25 synth-action piano keys (`C3`–`C5` with 15 white keys + 10 recessed black sharp/flat keys)**—into a zero-latency audio mixer, device router, Bluetooth wake-up controller, and hotkey macro surface.
 
 ---
 

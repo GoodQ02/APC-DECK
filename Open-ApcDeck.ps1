@@ -2,7 +2,8 @@
 param(
     [ValidateSet('Panel','Headless','Snapshot','ResetDefaults','Stop')][string]$Mode = 'Panel',
     [switch]$Minimized,
-    [switch]$SmokeTestUi
+    [switch]$SmokeTestUi,
+    [string]$SavePreviewPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -10,9 +11,10 @@ $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'ApcDeck.psm1') -Force -DisableNameChecking
 
-$showEventName = 'Local\GoodCube.ApcMidiDeck.ShowEvent'
-$stopEventName = 'Local\GoodCube.ApcMidiDeck.StopEvent'
-$mutexName     = 'Local\GoodCube.ApcMidiDeck.Instance'
+$instanceSuffix = if ($SmokeTestUi) { '.SmokeTest' } else { '' }
+$showEventName  = "Local\GoodCube.ApcMidiDeck.ShowEvent$instanceSuffix"
+$stopEventName  = "Local\GoodCube.ApcMidiDeck.StopEvent$instanceSuffix"
+$mutexName      = "Local\GoodCube.ApcMidiDeck.Instance$instanceSuffix"
 
 if ($Mode -eq 'Stop') {
     try {
@@ -35,9 +37,9 @@ if ($Mode -eq 'ResetDefaults') {
 }
 
 if ($Mode -eq 'Snapshot') {
-    $prof = Load-ApcProfile
+    $prof  = Load-ApcProfile
     $audio = Get-AudioEndpointsSnapshot
-    $bt = Get-PairedBluetoothDevices
+    $bt    = Get-PairedBluetoothDevices -AudioSnapshot $audio
     [pscustomobject]@{
         MidiInIndex  = [GoodCube.ApcDeck.NativeBridge]::FindMidiInIndex('APC Key 25')
         MidiOutIndex = [GoodCube.ApcDeck.NativeBridge]::FindMidiOutIndex('APC Key 25')
@@ -59,7 +61,6 @@ if ($curDesktop -and $curDesktop -ne 'Default' -and -not $SmokeTestUi) {
 }
 
 # Single-instance check: if APC-DECK is already running, signal it to pop its window to the front.
-# If the existing instance is unresponsive or windowless, automatically self-heal and replace it.
 $windowTitle = 'GOOD-CUBE | Akai APC Key 25 Stream Deck Controller & Mapper'
 $instanceMutex = [Threading.Mutex]::new($false, $mutexName)
 $ownsMutex = $false
@@ -117,16 +118,38 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [Windows.Forms.Application]::EnableVisualStyles()
 
-$script:ProfileMap    = Load-ApcProfile
-$script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
-$script:BtSnapshot    = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
-$script:SelectedId    = 'Pad_32'
-$script:ControlButtons= @{}
-$script:KnobValues    = @{}
-$script:KnobPickedUp  = @{}
-$script:KnobLastPhys  = @{}
+if (-not ('GoodCube.ApcDeck.BufferedButton' -as [type])) {
+    Add-Type -ReferencedAssemblies @('System.Windows.Forms', 'System.Drawing', 'System.ComponentModel.Primitives', 'System.Drawing.Primitives') -TypeDefinition @"
+using System;
+using System.Windows.Forms;
+namespace GoodCube.ApcDeck {
+    public class BufferedButton : Button {
+        public BufferedButton() {
+            this.DoubleBuffered = true;
+            this.ResizeRedraw = true;
+            this.SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+    }
+    public class BufferedPanel : Panel {
+        public BufferedPanel() {
+            this.DoubleBuffered = true;
+            this.ResizeRedraw = true;
+            this.SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+        }
+    }
+}
+"@
+}
 
-# Initialize knob percentages from current audio device levels
+$script:ProfileMap     = Load-ApcProfile
+$script:AudioSnapshot  = @(Get-AudioEndpointsSnapshot)
+$script:BtSnapshot     = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
+$script:SelectedId     = 'Pad_32'
+$script:ControlButtons = @{}
+$script:KnobValues     = @{}
+$script:KnobPickedUp   = @{}
+$script:KnobLastPhys   = @{}
+
 foreach ($cc in 48..55) {
     $cid = "Knob_$cc"
     $script:KnobValues[$cid]   = 75
@@ -145,37 +168,69 @@ if ($openMsg -eq 'OK') {
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
 }
 
-# Color palette
-$cBgDark      = [Drawing.Color]::FromArgb(18, 22, 29)
-$cPanelBg     = [Drawing.Color]::FromArgb(26, 32, 42)
-$cCardBg      = [Drawing.Color]::FromArgb(35, 43, 56)
-$cKnobBg      = [Drawing.Color]::FromArgb(30, 41, 59)
-$cKnobZeroBg  = [Drawing.Color]::FromArgb(69, 10, 10)
-$cGreenFill   = [Drawing.Color]::FromArgb(22, 101, 52)
-$cGreenBlink  = [Drawing.Color]::FromArgb(5, 150, 105)
-$cRedFill     = [Drawing.Color]::FromArgb(127, 29, 29)
-$cRedBlink    = [Drawing.Color]::FromArgb(185, 28, 28)
-$cAmberFill   = [Drawing.Color]::FromArgb(120, 53, 15)
-$cAmberBlink  = [Drawing.Color]::FromArgb(180, 83, 9)
-$cUnmapped    = [Drawing.Color]::FromArgb(30, 36, 46)
-$cKeyWhite    = [Drawing.Color]::FromArgb(226, 232, 240)
-$cKeyBlack    = [Drawing.Color]::FromArgb(15, 23, 42)
+# Hardware-accurate Akai APC Key 25 palette (Operate Mode — Restrained Dark Studio Hardware)
+$cChassisBg   = [Drawing.Color]::FromArgb(16, 18, 23)
+$cBezelBg     = [Drawing.Color]::FromArgb(24, 27, 34)
+$cDeckSurface = [Drawing.Color]::FromArgb(30, 34, 43)
+$cInspectorBg = [Drawing.Color]::FromArgb(22, 26, 34)
+$cFieldBg     = [Drawing.Color]::FromArgb(33, 39, 51)
+$cAkaiRed     = [Drawing.Color]::FromArgb(225, 29, 46)
+$cCyanSelect  = [Drawing.Color]::FromArgb(56, 189, 248)
+$cGreenFill   = [Drawing.Color]::FromArgb(21, 128, 61)
+$cGreenGlow   = [Drawing.Color]::FromArgb(74, 222, 128)
+$cGreenBlink  = [Drawing.Color]::FromArgb(16, 185, 129)
+$cRedFill     = [Drawing.Color]::FromArgb(153, 27, 27)
+$cRedGlow     = [Drawing.Color]::FromArgb(248, 113, 113)
+$cRedBlink    = [Drawing.Color]::FromArgb(220, 38, 38)
+$cAmberFill   = [Drawing.Color]::FromArgb(146, 64, 14)
+$cAmberGlow   = [Drawing.Color]::FromArgb(251, 191, 36)
+$cAmberBlink  = [Drawing.Color]::FromArgb(217, 119, 6)
+$cPadUnmapped = [Drawing.Color]::FromArgb(42, 47, 58)
+$cKeyWhite    = [Drawing.Color]::FromArgb(238, 242, 246)
+$cKeyBlack    = [Drawing.Color]::FromArgb(20, 24, 31)
 $cKeyMapped   = [Drawing.Color]::FromArgb(14, 116, 144)
-$cCyanBorder  = [Drawing.Color]::FromArgb(0, 240, 255)
+
+function Format-CompactText([string]$text, [int]$maxChars = 18) {
+    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    $clean = $text.Trim()
+    if ($clean.Length -le $maxChars) { return $clean }
+    return ($clean.Substring(0, [Math]::Max(1, $maxChars - 1)).TrimEnd() + '…')
+}
+
+# Hardware silkscreen metadata for Scene (Notes 82..86, 81) and Track (Notes 64..71) buttons
+$script:SceneMeta = @{
+    82 = @{ Arrow = '► 1'; ShiftBadge = 'CLIP STOP' }
+    83 = @{ Arrow = '► 2'; ShiftBadge = 'SOLO' }
+    84 = @{ Arrow = '► 3'; ShiftBadge = 'REC ARM' }
+    85 = @{ Arrow = '► 4'; ShiftBadge = 'MUTE' }
+    86 = @{ Arrow = '► 5'; ShiftBadge = 'SELECT' }
+    81 = @{ Arrow = '■';   ShiftBadge = 'STOP ALL CLIPS' }
+}
+$script:TrackMeta = @{
+    64 = @{ Top = '▲'; Sub = 'UP' }
+    65 = @{ Top = '▼'; Sub = 'DOWN' }
+    66 = @{ Top = '◀'; Sub = 'LEFT' }
+    67 = @{ Top = '▶'; Sub = 'RIGHT' }
+    68 = @{ Top = '◉'; Sub = 'VOLUME' }
+    69 = @{ Top = '◉'; Sub = 'PAN' }
+    70 = @{ Top = '◉'; Sub = 'SEND' }
+    71 = @{ Top = '◉'; Sub = 'DEVICE' }
+}
 
 $form = [Windows.Forms.Form]::new()
 $form.AutoScaleMode = [Windows.Forms.AutoScaleMode]::None
-$form.Text = 'GOOD-CUBE | Akai APC Key 25 Stream Deck Controller & Mapper'
+$form.Text = $windowTitle
+$form.KeyPreview = $true
 $primWa = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$initW  = [Math]::Min(1660, [Math]::Max(1240, $primWa.Width - 80))
-$initH  = [Math]::Min(960,  [Math]::Max(760,  $primWa.Height - 60))
+$initW  = [Math]::Min(1680, [Math]::Max(1260, $primWa.Width - 70))
+$initH  = [Math]::Min(970,  [Math]::Max(760,  $primWa.Height - 54))
 $initX  = $primWa.X + [int](($primWa.Width - $initW) / 2)
 $initY  = $primWa.Y + [int](($primWa.Height - $initH) / 2)
 $form.StartPosition = [Windows.Forms.FormStartPosition]::Manual
 $form.Bounds = [Drawing.Rectangle]::new($initX, $initY, $initW, $initH)
-$form.MinimumSize = [Drawing.Size]::new(1180, 740)
+$form.MinimumSize = [Drawing.Size]::new(1200, 740)
 $form.Font = [Drawing.Font]::new('Segoe UI', 9.0)
-$form.BackColor = $cBgDark
+$form.BackColor = $cChassisBg
 $form.ForeColor = [Drawing.Color]::Gainsboro
 
 $icoPath = Join-Path $PSScriptRoot 'assets\apc-deck.ico'
@@ -183,214 +238,813 @@ if (Test-Path -LiteralPath $icoPath) {
     try { $form.Icon = [Drawing.Icon]::new($icoPath) } catch { }
 }
 
-# System Tray Icon for background operation
+# System Tray Icon
 $trayIcon = [Windows.Forms.NotifyIcon]::new()
 $trayIcon.Text = 'GOOD-CUBE APC Key 25 Audio Deck'
 $trayIcon.Icon = if ($form.Icon) { $form.Icon } else { [Drawing.SystemIcons]::Application }
 $trayIcon.Visible = $true
 $trayMenu = [Windows.Forms.ContextMenuStrip]::new()
-$miShow = $trayMenu.Items.Add('Open APC-DECK Window')
-$miSync = $trayMenu.Items.Add('Refresh Audio & Sync Pad LEDs')
+$miShow    = $trayMenu.Items.Add('Open APC-DECK Window')
+$miSync    = $trayMenu.Items.Add('Refresh Audio & Sync Pad LEDs')
 $miBalance = $trayMenu.Items.Add('Balance All Audio (95% Mics)')
 [void]$trayMenu.Items.Add('-')
-$miExit = $trayMenu.Items.Add('Exit APC-DECK Controller')
+$miExit    = $trayMenu.Items.Add('Exit APC-DECK Controller')
 $trayIcon.ContextMenuStrip = $trayMenu
 
-# Top Root Layout: Header (58px), Main Body (Fill), Status Bar (54px)
+# Root Layout: Top Hardware Header Bar (52px), Main Workspace (Fill), Bottom Telemetry Bar (50px)
 $rootLayout = [Windows.Forms.TableLayoutPanel]::new()
 $rootLayout.Dock = 'Fill'
 $rootLayout.ColumnCount = 1
 $rootLayout.RowCount = 3
-[void]$rootLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute, 58))
+[void]$rootLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute, 52))
 [void]$rootLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 100))
-[void]$rootLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute, 54))
+[void]$rootLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute, 50))
 $form.Controls.Add($rootLayout)
 
-# Header Bar
-$headerPanel = [Windows.Forms.Panel]::new()
+# --- TOP HARDWARE CHASSIS HEADER ---
+$headerPanel = [GoodCube.ApcDeck.BufferedPanel]::new()
 $headerPanel.Dock = 'Fill'
-$headerPanel.BackColor = $cPanelBg
-$headerPanel.Padding = [Windows.Forms.Padding]::new(14, 8, 14, 6)
+$headerPanel.BackColor = $cBezelBg
 $rootLayout.Controls.Add($headerPanel, 0, 0)
 
-$lblTitle = [Windows.Forms.Label]::new()
-$lblTitle.Text = 'AKAI APC KEY 25  |  STREAM DECK AUDIO, BLUETOOTH & HOTKEY CONTROLLER'
-$lblTitle.Font = [Drawing.Font]::new('Segoe UI Semibold', 12, [Drawing.FontStyle]::Bold)
-$lblTitle.ForeColor = [Drawing.Color]::White
-$lblTitle.AutoSize = $true
-$lblTitle.Location = [Drawing.Point]::new(14, 7)
-$headerPanel.Controls.Add($lblTitle)
+$headerPanel.Add_Paint({
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $w = $sender.ClientSize.Width
+    $h = $sender.ClientSize.Height
 
-$lblSubTitle = [Windows.Forms.Label]::new()
-$lblSubTitle.Text = 'Touch any physical knob, pad, or piano key on the APC Key 25 (or click below) to map it. Knobs snap cleanly to 0% (zeroed/muted) and 100%.'
-$lblSubTitle.Font = [Drawing.Font]::new('Segoe UI', 9)
-$lblSubTitle.ForeColor = [Drawing.Color]::FromArgb(148, 163, 184)
-$lblSubTitle.AutoSize = $true
-$lblSubTitle.Location = [Drawing.Point]::new(15, 32)
-$headerPanel.Controls.Add($lblSubTitle)
+    # Top crimson Akai accent line
+    $redBrush = [Drawing.SolidBrush]::new($cAkaiRed)
+    $g.FillRectangle($redBrush, 0, 0, $w, 3)
 
-# Main Split: Left = Hardware Surface (72%), Right = Stream Deck Property Inspector (28%)
+    # AKAI PROFESSIONAL badge
+    $g.FillRectangle($redBrush, 14, 11, 168, 28)
+    $fBrand = [Drawing.Font]::new('Segoe UI', 10.5, [Drawing.FontStyle]::Bold)
+    $fSub   = [Drawing.Font]::new('Segoe UI Semibold', 9.0, [Drawing.FontStyle]::Regular)
+    $fModel = [Drawing.Font]::new('Segoe UI', 14.0, [Drawing.FontStyle]::Bold)
+    $g.DrawString('AKAI PROFESSIONAL', $fBrand, [Drawing.Brushes]::White, 21, 15)
+
+    # APC key 25 silkscreen title
+    $g.DrawString('APC key 25', $fModel, [Drawing.Brushes]::White, 196, 11)
+    $mutedBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(148, 163, 184))
+    $g.DrawString('1:1 Physical Hardware Twin  ·  Click or touch any physical pad, knob, button, or piano key to map  ·  Right-click on screen to test', $fSub, $mutedBrush, 322, 17)
+
+    # Live MIDI connection pill on far right
+    $isOpen = [GoodCube.ApcDeck.NativeBridge]::IsOpen
+    $pillW = 190
+    $pillX = [Math]::Max(340, $w - $pillW - 16)
+    $pillBg = if ($isOpen) { [Drawing.Color]::FromArgb(20, 83, 45) } else { [Drawing.Color]::FromArgb(127, 29, 29) }
+    $pillDot = if ($isOpen) { $cGreenGlow } else { $cRedGlow }
+    $pillTxt = if ($isOpen) { 'MIDI IN / LED OUT ONLINE' } else { 'MIDI OFFLINE (CLICK REFRESH)' }
+    $pBrush = [Drawing.SolidBrush]::new($pillBg)
+    $dBrush = [Drawing.SolidBrush]::new($pillDot)
+    $g.FillRectangle($pBrush, $pillX, 12, $pillW, 26)
+    $g.FillEllipse($dBrush, $pillX + 10, 20, 10, 10)
+    $fPill = [Drawing.Font]::new('Segoe UI Semibold', 8.0, [Drawing.FontStyle]::Bold)
+    $g.DrawString($pillTxt, $fPill, [Drawing.Brushes]::White, $pillX + 26, 18)
+
+    $redBrush.Dispose(); $mutedBrush.Dispose(); $pBrush.Dispose(); $dBrush.Dispose()
+    $fBrand.Dispose(); $fSub.Dispose(); $fModel.Dispose(); $fPill.Dispose()
+})
+
+# --- MAIN WORKSPACE SPLIT: Left = Authentic APC Key 25 Hardware Chassis (73%), Right = Property Inspector (27%) ---
 $mainSplit = [Windows.Forms.TableLayoutPanel]::new()
 $mainSplit.Dock = 'Fill'
 $mainSplit.ColumnCount = 2
 $mainSplit.RowCount = 1
-[void]$mainSplit.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 71))
-[void]$mainSplit.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 29))
+[void]$mainSplit.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 73))
+[void]$mainSplit.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 27))
 $rootLayout.Controls.Add($mainSplit, 0, 1)
 
-# Left Hardware Surface Container
-$hwLayout = [Windows.Forms.TableLayoutPanel]::new()
-$hwLayout.Dock = 'Fill'
-$hwLayout.Padding = [Windows.Forms.Padding]::new(8, 6, 6, 6)
-$hwLayout.ColumnCount = 1
-$hwLayout.RowCount = 3
-[void]$hwLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute, 114)) # 8 Knobs
-[void]$hwLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 100))  # 5x8 Pads + Scene + Track
-[void]$hwLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Absolute, 130)) # 25 Piano Keys
-$mainSplit.Controls.Add($hwLayout, 0, 0)
+# --- LEFT: AKAI APC KEY 25 HARDWARE CHASSIS ---
+# Real APC Key 25 layout:
+#   Top Deck (67% height):
+#     Left (63% width)  = 5x8 RGB Clip Pads + Column 9 Round Scene Buttons (1..5 + STOP ALL) + Row 6 Round Track Buttons (UP/DOWN/LEFT/RIGHT/VOL/PAN/SEND/DEV)
+#     Right (37% width) = 2x4 Rotary Encoder Knobs (K1..K4 top row, K5..K8 bottom row) + Transport/Utility Cluster (SUSTAIN, OCT-, OCT+, PLAY, REC, SHIFT)
+#   Bottom Deck (33% height):
+#     Full-Width 25-Note Overlapping Synth-Action Piano Keyboard (15 White Keys C3..C5 + 10 Recessed Black Sharp/Flat Keys)
+$chassisLayout = [Windows.Forms.TableLayoutPanel]::new()
+$chassisLayout.Dock = 'Fill'
+$chassisLayout.Padding = [Windows.Forms.Padding]::new(8, 6, 6, 6)
+$chassisLayout.BackColor = $cChassisBg
+$chassisLayout.ColumnCount = 1
+$chassisLayout.RowCount = 2
+[void]$chassisLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 67))
+[void]$chassisLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 33))
+$mainSplit.Controls.Add($chassisLayout, 0, 0)
 
-# --- 1. 8 ROTARY KNOBS PANEL (CC 48..55) ---
-$knobsGroup = [Windows.Forms.GroupBox]::new()
-$knobsGroup.Text = '8 Assignable Rotary Knobs (K1 – K8  |  MIDI Ch 1 CC 48–55  |  60Hz Zero-Out & Auto-Unmute)'
-$knobsGroup.Dock = 'Fill'
-$knobsGroup.ForeColor = [Drawing.Color]::FromArgb(56, 189, 248)
-$hwLayout.Controls.Add($knobsGroup, 0, 0)
+# Upper Hardware Deck Split (Left = Clip Matrix + Scene/Track Buttons, Right = 2x4 Knobs + Transport Cluster)
+$upperDeck = [Windows.Forms.TableLayoutPanel]::new()
+$upperDeck.Dock = 'Fill'
+$upperDeck.ColumnCount = 2
+$upperDeck.RowCount = 1
+[void]$upperDeck.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 64))
+[void]$upperDeck.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 36))
+$chassisLayout.Controls.Add($upperDeck, 0, 0)
 
-$knobsGrid = [Windows.Forms.TableLayoutPanel]::new()
-$knobsGrid.Dock = 'Fill'
-$knobsGrid.ColumnCount = 8
-$knobsGrid.RowCount = 1
-for ($i = 0; $i -lt 8; $i++) {
-    [void]$knobsGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 12.5))
-}
-$knobsGroup.Controls.Add($knobsGrid)
-
-for ($i = 0; $i -lt 8; $i++) {
-    $cc = 48 + $i
-    $cid = "Knob_$cc"
-    $btn = [Windows.Forms.Button]::new()
-    $btn.Dock = 'Fill'
-    $btn.Margin = [Windows.Forms.Padding]::new(4, 4, 4, 4)
-    $btn.FlatStyle = 'Flat'
-    $btn.FlatAppearance.BorderSize = 2
-    $btn.BackColor = $cKnobBg
-    $btn.ForeColor = [Drawing.Color]::White
-    $btn.Font = [Drawing.Font]::new('Segoe UI Semibold', 8.5, [Drawing.FontStyle]::Bold)
-    $btn.Tag = $cid
-    $script:ControlButtons[$cid] = $btn
-    $knobsGrid.Controls.Add($btn, $i, 0)
-}
-
-# --- 2. 5x8 CLIP LAUNCH PADS + 5 SCENE BUTTONS + 8 TRACK BUTTONS ---
-$padsGroup = [Windows.Forms.GroupBox]::new()
-$padsGroup.Text = '40 RGB Clip Launch Pads (5x8) + 8 Track/Mode Buttons + 6 Scene Buttons (MIDI Ch 1)'
-$padsGroup.Dock = 'Fill'
-$padsGroup.ForeColor = [Drawing.Color]::FromArgb(74, 222, 128)
-$hwLayout.Controls.Add($padsGroup, 0, 1)
+# ==============================================================================
+# 1. UPPER-LEFT DECK: 5x8 CLIP MATRIX + 5 SCENE LAUNCH + 8 TRACK + STOP ALL CLIPS
+# ==============================================================================
+$matrixBezel = [Windows.Forms.GroupBox]::new()
+$matrixBezel.Text = '5×8 RGB CLIP LAUNCH MATRIX  ·  SCENE LAUNCH [CLIP STOP / SOLO / REC ARM / MUTE / SELECT]  ·  TRACK && KNOB CTRL'
+$matrixBezel.Dock = 'Fill'
+$matrixBezel.ForeColor = [Drawing.Color]::FromArgb(148, 163, 184)
+$matrixBezel.BackColor = $cBezelBg
+$matrixBezel.Padding = [Windows.Forms.Padding]::new(6, 6, 6, 6)
+$upperDeck.Controls.Add($matrixBezel, 0, 0)
 
 $padsGrid = [Windows.Forms.TableLayoutPanel]::new()
 $padsGrid.Dock = 'Fill'
 $padsGrid.ColumnCount = 9
 $padsGrid.RowCount = 6
-for ($c = 0; $c -lt 9; $c++) {
-    [void]$padsGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 11.11))
+for ($c = 0; $c -lt 8; $c++) {
+    [void]$padsGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 10.8))
 }
-for ($r = 0; $r -lt 6; $r++) {
-    [void]$padsGrid.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 16.66))
+[void]$padsGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 13.6))
+for ($r = 0; $r -lt 5; $r++) {
+    [void]$padsGrid.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 16.5))
 }
-$padsGroup.Controls.Add($padsGrid)
+[void]$padsGrid.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 17.5))
+$matrixBezel.Controls.Add($padsGrid)
 
-# Rows 0..4 (top to bottom) correspond to APC Key 25 Note rows 32..39 down to 0..7
+# Custom painter for rectangular RGB Clip Pads (Pad_0..Pad_39)
+$padPaintHandler = {
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $cid = [string]$sender.Tag
+    $m   = if ($script:ProfileMap.ContainsKey($cid)) { $script:ProfileMap[$cid] } else { $null }
+    $sel = ($cid -eq $script:SelectedId)
+    $vel = Get-PadLedVelocity -Mapping $m -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
+
+    $fillCol = switch ($vel) {
+        1 { $cGreenFill }
+        2 { $cGreenBlink }
+        3 { $cRedFill }
+        4 { $cRedBlink }
+        5 { $cAmberFill }
+        6 { $cAmberBlink }
+        default { $cPadUnmapped }
+    }
+    $ledGlow = switch ($vel) {
+        1 { $cGreenGlow }
+        2 { $cGreenGlow }
+        3 { $cRedGlow }
+        4 { $cRedGlow }
+        5 { $cAmberGlow }
+        6 { $cAmberGlow }
+        default { [Drawing.Color]::FromArgb(71, 85, 105) }
+    }
+
+    $w = $sender.ClientSize.Width
+    $h = $sender.ClientSize.Height
+    $g.Clear($cBezelBg)
+
+    $padBrush = [Drawing.SolidBrush]::new($fillCol)
+    $g.FillRectangle($padBrush, 2, 2, $w - 4, $h - 4)
+
+    # Top inner LED lightbar strip
+    $glowBrush = [Drawing.SolidBrush]::new($ledGlow)
+    $g.FillRectangle($glowBrush, 4, 3, $w - 8, 3)
+
+    # Border (bright cyan when selected, subtle bezel otherwise)
+    $borderPen = if ($sel) {
+        [Drawing.Pen]::new($cCyanSelect, 2.5)
+    } else {
+        [Drawing.Pen]::new([Drawing.Color]::FromArgb(60, 72, 90), 1.0)
+    }
+    $g.DrawRectangle($borderPen, 2, 2, $w - 5, $h - 5)
+
+    # Pad coordinate badge (top-left) + MIDI note (top-right)
+    $noteNum = [int]($cid -replace '^Pad_','')
+    $rowNum  = 5 - [int][Math]::Floor($noteNum / 8)
+    $colNum  = ($noteNum % 8) + 1
+    $fTiny   = [Drawing.Font]::new('Segoe UI', 6.8, [Drawing.FontStyle]::Bold)
+    $fMain   = [Drawing.Font]::new('Segoe UI Semibold', 8.2, [Drawing.FontStyle]::Bold)
+    $fTarget = [Drawing.Font]::new('Segoe UI', 6.8, [Drawing.FontStyle]::Regular)
+    $dimBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(203, 213, 225))
+
+    $g.DrawString("R${rowNum}·C${colNum}", $fTiny, $dimBrush, 5, 7)
+
+    $lblText = if ($m -and ($m.ActionType -ne 'None' -or $vel -gt 0)) {
+        Format-CompactText $m.Label 14
+    } else {
+        'UNASSIGNED'
+    }
+    $subText = if ($m -and $m.ActionType -ne 'None') {
+        Format-CompactText $(if ($m.Target) { $m.Target } else { $m.ActionType }) 16
+    } else {
+        "Note $noteNum"
+    }
+
+    $sf = [Drawing.StringFormat]::new()
+    $sf.Alignment = [Drawing.StringAlignment]::Center
+    $sf.LineAlignment = [Drawing.StringAlignment]::Center
+    $sf.Trimming = [Drawing.StringTrimming]::EllipsisCharacter
+    $sf.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
+
+    $lblBrush = if ($m -and ($m.ActionType -ne 'None' -or $vel -gt 0)) { [Drawing.Brushes]::White } else { $dimBrush }
+    $g.DrawString($lblText, $fMain, $lblBrush, [Drawing.RectangleF]::new(3, 18, $w - 6, [Math]::Max(16, $h - 32)), $sf)
+    $g.DrawString($subText, $fTarget, $dimBrush, [Drawing.RectangleF]::new(3, $h - 16, $w - 6, 13), $sf)
+
+    $padBrush.Dispose(); $glowBrush.Dispose(); $borderPen.Dispose(); $dimBrush.Dispose()
+    $fTiny.Dispose(); $fMain.Dispose(); $fTarget.Dispose(); $sf.Dispose()
+}
+
+# Custom painter for Circular Hardware Scene & Track Buttons (Scene_82..86, Scene_81, Track_64..71)
+$roundBtnPaintHandler = {
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $cid = [string]$sender.Tag
+    $m   = if ($script:ProfileMap.ContainsKey($cid)) { $script:ProfileMap[$cid] } else { $null }
+    $sel = ($cid -eq $script:SelectedId)
+    $isScene = $cid.StartsWith('Scene_')
+    $code = [int]($cid -replace '^(Scene|Track)_','')
+
+    $w = $sender.ClientSize.Width
+    $h = $sender.ClientSize.Height
+    $g.Clear($cBezelBg)
+
+    $active = ($m -and $m.ActionType -ne 'None')
+    $btnFill = if (-not $active -and (-not $m -or $m.LedColor -in @('Auto','Off'))) {
+        [Drawing.Color]::FromArgb(38, 43, 54)
+    } elseif ($isScene) {
+        Get-UiColorForColorName $m.LedColor $cGreenFill
+    } else {
+        Get-UiColorForColorName $m.LedColor $cRedFill
+    }
+
+    # Draw recessed pill/circle button cap in upper portion + authentic Akai silkscreen badge below
+    $capH = [Math]::Max(22, $h - 19)
+    $capW = [Math]::Min($w - 8, [Math]::Max(34, $capH + 18))
+    $capX = [int](($w - $capW) / 2)
+    $capY = 2
+
+    $capBrush = [Drawing.SolidBrush]::new($btnFill)
+    $g.FillEllipse($capBrush, $capX, $capY, $capW, $capH)
+
+    $ringPen = if ($sel) {
+        [Drawing.Pen]::new($cCyanSelect, 2.5)
+    } elseif ($active) {
+        [Drawing.Pen]::new($(if ($isScene) { $cGreenGlow } else { $cRedGlow }), 1.5)
+    } else {
+        [Drawing.Pen]::new([Drawing.Color]::FromArgb(80, 92, 112), 1.2)
+    }
+    $g.DrawEllipse($ringPen, $capX, $capY, $capW, $capH)
+
+    $sf = [Drawing.StringFormat]::new()
+    $sf.Alignment = [Drawing.StringAlignment]::Center
+    $sf.LineAlignment = [Drawing.StringAlignment]::Center
+    $sf.Trimming = [Drawing.StringTrimming]::EllipsisCharacter
+    $sf.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
+
+    $fCap   = [Drawing.Font]::new('Segoe UI Semibold', 7.3, [Drawing.FontStyle]::Bold)
+    $fBadge = [Drawing.Font]::new('Segoe UI', 6.5, [Drawing.FontStyle]::Bold)
+
+    if ($isScene) {
+        $meta = $script:SceneMeta[$code]
+        $capTitle = if ($m -and $m.Label) { Format-CompactText $m.Label 10 } else { $meta.Arrow }
+        $g.DrawString($capTitle, $fCap, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(2, $capY, $w - 4, $capH), $sf)
+
+        # Red Akai Shift-function silkscreen badge beneath the round Scene button
+        $badgeBg = if ($code -eq 81) { [Drawing.Color]::FromArgb(51, 65, 85) } else { $cAkaiRed }
+        $bBrush = [Drawing.SolidBrush]::new($badgeBg)
+        $g.FillRectangle($bBrush, 3, $h - 15, $w - 6, 13)
+        $g.DrawString($meta.ShiftBadge, $fBadge, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(3, $h - 15, $w - 6, 13), $sf)
+        $bBrush.Dispose()
+    } else {
+        $meta = $script:TrackMeta[$code]
+        $customLbl = if ($m -and $m.Label -and $m.Label -ne $meta.Sub) { Format-CompactText $m.Label 9 } else { $meta.Sub }
+        $capTitle = "$($meta.Top) $customLbl"
+        $g.DrawString($capTitle, $fCap, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(2, $capY, $w - 4, $capH), $sf)
+
+        $bBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(45, 55, 72))
+        $g.FillRectangle($bBrush, 3, $h - 15, $w - 6, 13)
+        $g.DrawString($meta.Sub, $fBadge, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(3, $h - 15, $w - 6, 13), $sf)
+        $bBrush.Dispose()
+    }
+
+    $capBrush.Dispose(); $ringPen.Dispose(); $fCap.Dispose(); $fBadge.Dispose(); $sf.Dispose()
+}
+
 $sceneNotes = @(82, 83, 84, 85, 86)
 for ($r = 0; $r -lt 5; $r++) {
     $baseNote = (4 - $r) * 8
     for ($c = 0; $c -lt 8; $c++) {
         $note = $baseNote + $c
-        $cid = "Pad_$note"
-        $btn = [Windows.Forms.Button]::new()
+        $cid  = "Pad_$note"
+        $btn  = [GoodCube.ApcDeck.BufferedButton]::new()
         $btn.Dock = 'Fill'
-        $btn.Margin = [Windows.Forms.Padding]::new(3)
+        $btn.Margin = [Windows.Forms.Padding]::new(2)
         $btn.FlatStyle = 'Flat'
-        $btn.FlatAppearance.BorderSize = 2
-        $btn.Font = [Drawing.Font]::new('Segoe UI Semibold', 8.2, [Drawing.FontStyle]::Bold)
+        $btn.FlatAppearance.BorderSize = 0
         $btn.Tag = $cid
+        $btn.Add_Paint($padPaintHandler)
         $script:ControlButtons[$cid] = $btn
         $padsGrid.Controls.Add($btn, $c, $r)
     }
-    # Column 8: Round Scene button (Notes 82..86)
     $sNote = $sceneNotes[$r]
-    $sId = "Scene_$sNote"
-    $sBtn = [Windows.Forms.Button]::new()
+    $sId   = "Scene_$sNote"
+    $sBtn  = [GoodCube.ApcDeck.BufferedButton]::new()
     $sBtn.Dock = 'Fill'
-    $sBtn.Margin = [Windows.Forms.Padding]::new(6, 4, 4, 4)
+    $sBtn.Margin = [Windows.Forms.Padding]::new(4, 2, 2, 2)
     $sBtn.FlatStyle = 'Flat'
-    $sBtn.FlatAppearance.BorderSize = 2
-    $sBtn.Font = [Drawing.Font]::new('Segoe UI Semibold', 8.0, [Drawing.FontStyle]::Bold)
+    $sBtn.FlatAppearance.BorderSize = 0
     $sBtn.Tag = $sId
+    $sBtn.Add_Paint($roundBtnPaintHandler)
     $script:ControlButtons[$sId] = $sBtn
     $padsGrid.Controls.Add($sBtn, 8, $r)
 }
 
-# Row 5: 8 Track/Knob-Mode Buttons (Notes 64..71) + Stop All Clips (Note 81)
 for ($c = 0; $c -lt 8; $c++) {
     $tNote = 64 + $c
-    $tId = "Track_$tNote"
-    $tBtn = [Windows.Forms.Button]::new()
+    $tId   = "Track_$tNote"
+    $tBtn  = [GoodCube.ApcDeck.BufferedButton]::new()
     $tBtn.Dock = 'Fill'
-    $tBtn.Margin = [Windows.Forms.Padding]::new(3, 6, 3, 3)
+    $tBtn.Margin = [Windows.Forms.Padding]::new(2, 4, 2, 2)
     $tBtn.FlatStyle = 'Flat'
-    $tBtn.FlatAppearance.BorderSize = 2
-    $tBtn.Font = [Drawing.Font]::new('Segoe UI Semibold', 7.8, [Drawing.FontStyle]::Bold)
+    $tBtn.FlatAppearance.BorderSize = 0
     $tBtn.Tag = $tId
+    $tBtn.Add_Paint($roundBtnPaintHandler)
     $script:ControlButtons[$tId] = $tBtn
     $padsGrid.Controls.Add($tBtn, $c, 5)
 }
-$stopBtn = [Windows.Forms.Button]::new()
+
+$stopBtn = [GoodCube.ApcDeck.BufferedButton]::new()
 $stopBtn.Dock = 'Fill'
-$stopBtn.Margin = [Windows.Forms.Padding]::new(6, 6, 4, 3)
+$stopBtn.Margin = [Windows.Forms.Padding]::new(4, 4, 2, 2)
 $stopBtn.FlatStyle = 'Flat'
-$stopBtn.FlatAppearance.BorderSize = 2
-$stopBtn.Font = [Drawing.Font]::new('Segoe UI Semibold', 7.8, [Drawing.FontStyle]::Bold)
+$stopBtn.FlatAppearance.BorderSize = 0
 $stopBtn.Tag = 'Scene_81'
+$stopBtn.Add_Paint($roundBtnPaintHandler)
 $script:ControlButtons['Scene_81'] = $stopBtn
 $padsGrid.Controls.Add($stopBtn, 8, 5)
 
-# --- 3. 25 MINI PIANO KEYS (Channel 2, Notes 48..72 -> C3..C5) ---
+# ==============================================================================
+# 2. UPPER-RIGHT DECK: 2x4 ROTARY KNOB BANK (K1..K8) + TRANSPORT / SHIFT CLUSTER
+# ==============================================================================
+$rightDeckSplit = [Windows.Forms.TableLayoutPanel]::new()
+$rightDeckSplit.Dock = 'Fill'
+$rightDeckSplit.ColumnCount = 1
+$rightDeckSplit.RowCount = 2
+[void]$rightDeckSplit.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 74))
+[void]$rightDeckSplit.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 26))
+$upperDeck.Controls.Add($rightDeckSplit, 1, 0)
+
+$knobsGroup = [Windows.Forms.GroupBox]::new()
+$knobsGroup.Text = '2×4 ROTARY KNOB BANK (K1–K8  ·  MIDI CC 48–55  ·  Turn Knob or Scroll)'
+$knobsGroup.Dock = 'Fill'
+$knobsGroup.ForeColor = $cCyanSelect
+$knobsGroup.BackColor = $cBezelBg
+$knobsGroup.Padding = [Windows.Forms.Padding]::new(6, 6, 6, 6)
+$rightDeckSplit.Controls.Add($knobsGroup, 0, 0)
+
+$knobsGrid = [Windows.Forms.TableLayoutPanel]::new()
+$knobsGrid.Dock = 'Fill'
+$knobsGrid.ColumnCount = 4
+$knobsGrid.RowCount = 2
+for ($c = 0; $c -lt 4; $c++) {
+    [void]$knobsGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 25))
+}
+for ($r = 0; $r -lt 2; $r++) {
+    [void]$knobsGrid.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 50))
+}
+$knobsGroup.Controls.Add($knobsGrid)
+
+# Custom 360-degree Rotary Potentiometer Dial painter for K1..K8
+$knobPaintHandler = {
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $cid = [string]$sender.Tag
+    $m   = if ($script:ProfileMap.ContainsKey($cid)) { $script:ProfileMap[$cid] } else { $null }
+    $sel = ($cid -eq $script:SelectedId)
+    $pct = if ($script:KnobValues.ContainsKey($cid)) { [int]$script:KnobValues[$cid] } else { 0 }
+    $cc  = [int]($cid -replace '^Knob_','')
+    $kIdx = ($cc - 47)
+
+    $w = $sender.ClientSize.Width
+    $h = $sender.ClientSize.Height
+    $g.Clear($cBezelBg)
+
+    $cardBg = if ($sel) { [Drawing.Color]::FromArgb(32, 45, 66) } elseif ($pct -eq 0) { [Drawing.Color]::FromArgb(52, 18, 24) } else { $cDeckSurface }
+    $cardBrush = [Drawing.SolidBrush]::new($cardBg)
+    $g.FillRectangle($cardBrush, 2, 2, $w - 4, $h - 4)
+
+    $borderPen = if ($sel) {
+        [Drawing.Pen]::new($cCyanSelect, 2.2)
+    } else {
+        [Drawing.Pen]::new([Drawing.Color]::FromArgb(55, 65, 81), 1.0)
+    }
+    $g.DrawRectangle($borderPen, 2, 2, $w - 5, $h - 5)
+
+    # Dial geometry — generously proportioned to fill the 2x4 knob cell
+    $dialDiam = [Math]::Max(40, [Math]::Min($w - 20, $h - 54))
+    $dialX    = [int](($w - $dialDiam) / 2)
+    $dialY    = 20
+    $cx       = $dialX + ($dialDiam / 2.0)
+    $cy       = $dialY + ($dialDiam / 2.0)
+
+    # Track arc (135 deg to +270 deg sweep)
+    $trackPen = [Drawing.Pen]::new([Drawing.Color]::FromArgb(51, 65, 85), 4.5)
+    $trackPen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+    $trackPen.EndCap   = [Drawing.Drawing2D.LineCap]::Round
+    $g.DrawArc($trackPen, $dialX, $dialY, $dialDiam, $dialDiam, 135, 270)
+
+    $arcColor = if ($pct -eq 0) { $cRedGlow } elseif ($pct -ge 95) { $cGreenGlow } else { $cCyanSelect }
+    $valPen = [Drawing.Pen]::new($arcColor, 4.5)
+    $valPen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+    $valPen.EndCap   = [Drawing.Drawing2D.LineCap]::Round
+    $sweep = [float]([Math]::Max(4.0, ($pct / 100.0) * 270.0))
+    $g.DrawArc($valPen, $dialX, $dialY, $dialDiam, $dialDiam, 135, $sweep)
+
+    # Inner dark anodized rotary cap
+    $capInset = 6
+    $capBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(17, 20, 27))
+    $capPen   = [Drawing.Pen]::new([Drawing.Color]::FromArgb(90, 102, 122), 1.2)
+    $g.FillEllipse($capBrush, $dialX + $capInset, $dialY + $capInset, $dialDiam - ($capInset * 2), $dialDiam - ($capInset * 2))
+    $g.DrawEllipse($capPen,   $dialX + $capInset, $dialY + $capInset, $dialDiam - ($capInset * 2), $dialDiam - ($capInset * 2))
+
+    # Pointer needle
+    $angleDeg = 135.0 + (($pct / 100.0) * 270.0)
+    $angleRad = $angleDeg * ([Math]::PI / 180.0)
+    $rInner   = ($dialDiam / 2.0) * 0.25
+    $rOuter   = ($dialDiam / 2.0) - $capInset - 2.0
+    $x1 = [float]($cx + [Math]::Cos($angleRad) * $rInner)
+    $y1 = [float]($cy + [Math]::Sin($angleRad) * $rInner)
+    $x2 = [float]($cx + [Math]::Cos($angleRad) * $rOuter)
+    $y2 = [float]($cy + [Math]::Sin($angleRad) * $rOuter)
+    $needlePen = [Drawing.Pen]::new([Drawing.Color]::White, 2.3)
+    $needlePen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+    $needlePen.EndCap   = [Drawing.Drawing2D.LineCap]::Round
+    $g.DrawLine($needlePen, $x1, $y1, $x2, $y2)
+
+    # Center cap pivot dot
+    $g.FillEllipse([Drawing.Brushes]::DimGray, [float]($cx - 3), [float]($cy - 3), 6.0, 6.0)
+
+    $sf = [Drawing.StringFormat]::new()
+    $sf.Alignment = [Drawing.StringAlignment]::Center
+    $sf.LineAlignment = [Drawing.StringAlignment]::Center
+    $sf.Trimming = [Drawing.StringTrimming]::EllipsisCharacter
+    $sf.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
+
+    $fTop  = [Drawing.Font]::new('Segoe UI Semibold', 7.2, [Drawing.FontStyle]::Bold)
+    $fLbl  = [Drawing.Font]::new('Segoe UI Semibold', 7.8, [Drawing.FontStyle]::Bold)
+    $fSub  = [Drawing.Font]::new('Segoe UI', 6.8, [Drawing.FontStyle]::Regular)
+    $fPct  = [Drawing.Font]::new('Consolas', 7.8, [Drawing.FontStyle]::Bold)
+
+    $pctText = if ($pct -eq 0) { '0% MUTE' } else { "$pct%" }
+    $pctBrush = [Drawing.SolidBrush]::new($arcColor)
+    $subBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(148, 163, 184))
+    $g.DrawString("K${kIdx}·CC${cc}", $fTop, [Drawing.Brushes]::Silver, 5, 4)
+    $g.DrawString($pctText, $fPct, $pctBrush, [Drawing.RectangleF]::new($w - 58, 3, 54, 14), $sf)
+
+    $cleanLbl = if ($m -and $m.Label) { Format-CompactText ($m.Label -replace '^K\d+:\s*','') 15 } else { "KNOB $kIdx" }
+    $targetSub = if ($m -and $m.Target) { Format-CompactText $m.Target 16 } elseif ($m) { $m.ActionType } else { 'Unassigned' }
+    $g.DrawString($cleanLbl,  $fLbl, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(3, $h - 32, $w - 6, 15), $sf)
+    $g.DrawString($targetSub, $fSub, $subBrush,                [Drawing.RectangleF]::new(3, $h - 17, $w - 6, 13), $sf)
+
+    $cardBrush.Dispose(); $borderPen.Dispose(); $trackPen.Dispose(); $valPen.Dispose()
+    $capBrush.Dispose(); $capPen.Dispose(); $needlePen.Dispose(); $pctBrush.Dispose(); $subBrush.Dispose()
+    $fTop.Dispose(); $fLbl.Dispose(); $fSub.Dispose(); $fPct.Dispose(); $sf.Dispose()
+}
+
+for ($i = 0; $i -lt 8; $i++) {
+    $cc  = 48 + $i
+    $cid = "Knob_$cc"
+    $r   = [int][Math]::Floor($i / 4)
+    $c   = $i % 4
+    $btn = [GoodCube.ApcDeck.BufferedButton]::new()
+    $btn.Dock = 'Fill'
+    $btn.Margin = [Windows.Forms.Padding]::new(3)
+    $btn.FlatStyle = 'Flat'
+    $btn.FlatAppearance.BorderSize = 0
+    $btn.Tag = $cid
+    $btn.Add_Paint($knobPaintHandler)
+    $btn.Add_MouseWheel({
+        param($sender, $e)
+        $kId = [string]$sender.Tag
+        if (-not $script:ProfileMap.ContainsKey($kId)) { return }
+        $cur = if ($script:KnobValues.ContainsKey($kId)) { [int]$script:KnobValues[$kId] } else { 50 }
+        $step = if ($e.Delta -gt 0) { 2 } else { -2 }
+        $newPct = [Math]::Max(0, [Math]::Min(100, $cur + $step))
+        $midiVal = [int][Math]::Round(($newPct / 100.0) * 127.0)
+        $script:KnobValues[$kId] = $newPct
+        $res = Set-AudioVolumeByMapping -Mapping $script:ProfileMap[$kId] -MidiValue $midiVal -AutoMuteAtZero
+        $sender.Invalidate()
+        Set-StatusBanner "MouseWheel [$($script:ProfileMap[$kId].Label)] -> $res"
+    })
+    $script:ControlButtons[$cid] = $btn
+    $knobsGrid.Controls.Add($btn, $c, $r)
+}
+
+# Transport & Utility Cluster directly under the 2x4 Knob Bank (matching real APC Key 25 right deck)
+$transGroup = [Windows.Forms.GroupBox]::new()
+$transGroup.Text = 'TRANSPORT, OCTAVE && SHIFT CLUSTER (MIDI Ch 1 Notes 91, 93, 98)'
+$transGroup.Dock = 'Fill'
+$transGroup.ForeColor = [Drawing.Color]::FromArgb(148, 163, 184)
+$transGroup.BackColor = $cBezelBg
+$transGroup.Padding = [Windows.Forms.Padding]::new(6, 4, 6, 4)
+$rightDeckSplit.Controls.Add($transGroup, 0, 1)
+
+$transGrid = [Windows.Forms.TableLayoutPanel]::new()
+$transGrid.Dock = 'Fill'
+$transGrid.ColumnCount = 3
+$transGrid.RowCount = 2
+for ($c = 0; $c -lt 3; $c++) {
+    [void]$transGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 33.33))
+}
+[void]$transGrid.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 42))
+[void]$transGrid.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 58))
+$transGroup.Controls.Add($transGrid)
+
+# Top row of cluster: Hardware-internal reference badges (SUSTAIN, OCT -, OCT +)
+$hwRefBadges = @('SUSTAIN (HW)', 'OCT − (HW KEYBED)', 'OCT + (HW KEYBED)')
+for ($c = 0; $c -lt 3; $c++) {
+    $lblHw = [Windows.Forms.Label]::new()
+    $lblHw.Text = $hwRefBadges[$c]
+    $lblHw.Dock = 'Fill'
+    $lblHw.Margin = [Windows.Forms.Padding]::new(3, 1, 3, 1)
+    $lblHw.TextAlign = [Drawing.ContentAlignment]::MiddleCenter
+    $lblHw.BackColor = [Drawing.Color]::FromArgb(20, 23, 30)
+    $lblHw.ForeColor = [Drawing.Color]::FromArgb(100, 116, 139)
+    $lblHw.Font = [Drawing.Font]::new('Segoe UI', 7.2, [Drawing.FontStyle]::Bold)
+    $transGrid.Controls.Add($lblHw, $c, 0)
+}
+
+# Bottom row of cluster: Mappable Physical Transport Buttons (Play_91, Rec_93, Shift_98)
+$transDefs = @(
+    @{ Id = 'Trans_91'; Hw = '► / ❚❚  PLAY'; Note = 91 },
+    @{ Id = 'Trans_93'; Hw = '●  REC';       Note = 93 },
+    @{ Id = 'Trans_98'; Hw = 'SHIFT';        Note = 98 }
+)
+for ($c = 0; $c -lt 3; $c++) {
+    $td = $transDefs[$c]
+    $tBtn = [GoodCube.ApcDeck.BufferedButton]::new()
+    $tBtn.Dock = 'Fill'
+    $tBtn.Margin = [Windows.Forms.Padding]::new(3, 2, 3, 2)
+    $tBtn.FlatStyle = 'Flat'
+    $tBtn.FlatAppearance.BorderSize = 1
+    $tBtn.Font = [Drawing.Font]::new('Segoe UI Semibold', 7.8, [Drawing.FontStyle]::Bold)
+    $tBtn.Tag = $td.Id
+    $script:ControlButtons[$td.Id] = $tBtn
+    $transGrid.Controls.Add($tBtn, $c, 1)
+}
+
+# ==============================================================================
+# 3. BOTTOM DECK: REALISTIC 25-NOTE OVERLAPPING SYNTH-ACTION PIANO KEYBOARD
+# ==============================================================================
 $keysGroup = [Windows.Forms.GroupBox]::new()
-$keysGroup.Text = '25 Synth-Action Piano Keys (C3 – C5  |  MIDI Ch 2 Notes 48–72  |  Click or Press Any Key to Map & Color)'
+$keysGroup.Text = '25 SYNTH-ACTION PIANO KEYBOARD (C3 – C5  ·  MIDI Ch 2 Notes 48–72  ·  15 White Keys + 10 Recessed Black Sharp/Flat Keys)'
 $keysGroup.Dock = 'Fill'
-$keysGroup.ForeColor = [Drawing.Color]::FromArgb(251, 191, 36)
-$hwLayout.Controls.Add($keysGroup, 0, 2)
+$keysGroup.ForeColor = $cAmberGlow
+$keysGroup.BackColor = $cBezelBg
+$keysGroup.Padding = [Windows.Forms.Padding]::new(8, 6, 8, 8)
+$chassisLayout.Controls.Add($keysGroup, 0, 1)
 
-$keysGrid = [Windows.Forms.TableLayoutPanel]::new()
-$keysGrid.Dock = 'Fill'
-$keysGrid.ColumnCount = 25
-$keysGrid.RowCount = 1
-for ($k = 0; $k -lt 25; $k++) {
-    [void]$keysGrid.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Percent, 4.0))
+$keybedCanvas = [GoodCube.ApcDeck.BufferedPanel]::new()
+$keybedCanvas.Dock = 'Fill'
+$keybedCanvas.BackColor = [Drawing.Color]::FromArgb(12, 14, 18)
+$keybedCanvas.Cursor = [Windows.Forms.Cursors]::Hand
+$keysGroup.Controls.Add($keybedCanvas)
+
+# Map MIDI Notes 48..72 into 15 White Keys and 10 Black Keys with exact musical offsets
+$whiteNotes = @(48, 50, 52, 53, 55, 57, 59, 60, 62, 64, 65, 67, 69, 71, 72)
+# Each black key sits between white key index W and W+1:
+$blackKeySpecs = @(
+    @{ Note = 49; AfterWhiteIdx = 0 },  # C#3
+    @{ Note = 51; AfterWhiteIdx = 1 },  # D#3
+    @{ Note = 54; AfterWhiteIdx = 3 },  # F#3
+    @{ Note = 56; AfterWhiteIdx = 4 },  # G#3
+    @{ Note = 58; AfterWhiteIdx = 5 },  # A#3
+    @{ Note = 61; AfterWhiteIdx = 7 },  # C#4
+    @{ Note = 63; AfterWhiteIdx = 8 },  # D#4
+    @{ Note = 66; AfterWhiteIdx = 10 }, # F#4
+    @{ Note = 68; AfterWhiteIdx = 11 }, # G#4
+    @{ Note = 70; AfterWhiteIdx = 12 }  # A#4
+)
+
+$script:WhiteKeyRects = @{}
+$script:BlackKeyRects = @{}
+$script:HoveredKeyId  = ''
+
+function Update-PianoKeybedGeometry {
+    $cw = $keybedCanvas.ClientSize.Width
+    $ch = $keybedCanvas.ClientSize.Height
+    if ($cw -le 50 -or $ch -le 30) { return }
+
+    $whiteCount = 15
+    $whiteW = [double]$cw / $whiteCount
+    $whiteH = $ch - 4
+
+    for ($idx = 0; $idx -lt $whiteCount; $idx++) {
+        $n   = $whiteNotes[$idx]
+        $x   = [int][Math]::Round($idx * $whiteW)
+        $nx  = [int][Math]::Round(($idx + 1) * $whiteW)
+        $w   = [Math]::Max(20, ($nx - $x - 2))
+        $script:WhiteKeyRects["Key_$n"] = [Drawing.Rectangle]::new($x + 1, 2, $w, $whiteH)
+    }
+
+    $blackW = [int][Math]::Max(22, [Math]::Round($whiteW * 0.62))
+    $blackH = [int][Math]::Max(28, [Math]::Round($whiteH * 0.61))
+    foreach ($bk in $blackKeySpecs) {
+        $centerX = [int][Math]::Round(($bk.AfterWhiteIdx + 1) * $whiteW)
+        $bx = $centerX - [int]($blackW / 2)
+        $script:BlackKeyRects["Key_$($bk.Note)"] = [Drawing.Rectangle]::new($bx, 2, $blackW, $blackH)
+    }
+    $keybedCanvas.Invalidate()
 }
-$keysGroup.Controls.Add($keysGrid)
 
-for ($k = 0; $k -lt 25; $k++) {
-    $note = 48 + $k
-    $kId = "Key_$note"
-    $kBtn = [Windows.Forms.Button]::new()
-    $kBtn.Dock = 'Fill'
-    $isSharp = (($note % 12) -in @(1, 3, 6, 8, 10))
-    $kBtn.Margin = if ($isSharp) { [Windows.Forms.Padding]::new(1, 2, 1, 26) } else { [Windows.Forms.Padding]::new(1, 14, 1, 2) }
-    $kBtn.FlatStyle = 'Flat'
-    $kBtn.FlatAppearance.BorderSize = 2
-    $kBtn.Font = [Drawing.Font]::new('Segoe UI', 7.2, [Drawing.FontStyle]::Bold)
-    $kBtn.Tag = $kId
-    $script:ControlButtons[$kId] = $kBtn
-    $keysGrid.Controls.Add($kBtn, $k, 0)
+function Get-PianoKeyAtPoint([int]$x, [int]$y) {
+    # Check recessed Black Keys FIRST since they sit physically on top of White Keys
+    foreach ($bk in $blackKeySpecs) {
+        $kId = "Key_$($bk.Note)"
+        if ($script:BlackKeyRects.ContainsKey($kId) -and $script:BlackKeyRects[$kId].Contains($x, $y)) {
+            return $kId
+        }
+    }
+    foreach ($n in $whiteNotes) {
+        $kId = "Key_$n"
+        if ($script:WhiteKeyRects.ContainsKey($kId) -and $script:WhiteKeyRects[$kId].Contains($x, $y)) {
+            return $kId
+        }
+    }
+    return $null
 }
 
-# --- RIGHT PANEL: STREAM DECK PROPERTY INSPECTOR ---
+$keybedCanvas.Add_Paint({
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $g.Clear([Drawing.Color]::FromArgb(10, 12, 16))
+
+    if ($script:WhiteKeyRects.Count -eq 0) { Update-PianoKeybedGeometry }
+    $noteNames = @('C','C#','D','D#','E','F','F#','G','G#','A','A#','B')
+
+    $sfBottom = [Drawing.StringFormat]::new()
+    $sfBottom.Alignment = [Drawing.StringAlignment]::Center
+    $sfBottom.LineAlignment = [Drawing.StringAlignment]::Near
+    $sfBottom.Trimming = [Drawing.StringTrimming]::EllipsisCharacter
+    $sfBottom.FormatFlags = [Drawing.StringFormatFlags]::NoWrap
+
+    $fNoteW = [Drawing.Font]::new('Segoe UI Semibold', 7.8, [Drawing.FontStyle]::Bold)
+    $fLblW  = [Drawing.Font]::new('Segoe UI Semibold', 7.2, [Drawing.FontStyle]::Bold)
+    $fNoteB = [Drawing.Font]::new('Segoe UI Semibold', 7.0, [Drawing.FontStyle]::Bold)
+    $fLblB  = [Drawing.Font]::new('Segoe UI', 6.5, [Drawing.FontStyle]::Bold)
+
+    # PASS 1: Render 15 Full-Height White Piano Keys (Notes 48, 50, 52..72)
+    foreach ($n in $whiteNotes) {
+        $kId = "Key_$n"
+        if (-not $script:WhiteKeyRects.ContainsKey($kId)) { continue }
+        $rc  = $script:WhiteKeyRects[$kId]
+        $m   = if ($script:ProfileMap.ContainsKey($kId)) { $script:ProfileMap[$kId] } else { $null }
+        $sel = ($kId -eq $script:SelectedId)
+        $hov = ($kId -eq $script:HoveredKeyId)
+        $oct = [int][Math]::Floor(($n / 12) - 1)
+        $noteName = $noteNames[$n % 12] + $oct
+
+        $hasColor = ($m -and $m.LedColor -notin @('Auto','Off',''))
+        $active   = ($m -and $m.ActionType -ne 'None')
+
+        $keyFill = if ($hasColor) {
+            Get-UiColorForColorName $m.LedColor $cKeyMapped
+        } elseif ($active) {
+            $cKeyMapped
+        } elseif ($hov) {
+            [Drawing.Color]::FromArgb(241, 245, 249)
+        } else {
+            $cKeyWhite
+        }
+
+        $kb = [Drawing.SolidBrush]::new($keyFill)
+        $g.FillRectangle($kb, $rc)
+        $kb.Dispose()
+
+        # Bottom 3D lip bevel on white key
+        $lipCol = if ($hasColor -or $active) { [Drawing.Color]::FromArgb(70, 0, 0, 0) } else { [Drawing.Color]::FromArgb(180, 190, 205) }
+        $lipBrush = [Drawing.SolidBrush]::new($lipCol)
+        $g.FillRectangle($lipBrush, $rc.X, $rc.Bottom - 6, $rc.Width, 6)
+        $lipBrush.Dispose()
+
+        $borderPen = if ($sel) {
+            [Drawing.Pen]::new($cCyanSelect, 2.8)
+        } else {
+            [Drawing.Pen]::new([Drawing.Color]::FromArgb(100, 116, 139), 1.0)
+        }
+        $g.DrawRectangle($borderPen, $rc.X, $rc.Y, $rc.Width - 1, $rc.Height - 1)
+        $borderPen.Dispose()
+
+        $txtBrush = if ($hasColor -or $active) { [Drawing.Brushes]::White } else { [Drawing.Brushes]::DarkSlateGray }
+        if ($active -or ($m -and $m.Label -and $m.Label -ne $noteName -and $m.Label -ne "KEY $noteName")) {
+            $lblTxt = Format-CompactText $m.Label 9
+            $g.DrawString($lblTxt, $fLblW, $txtBrush, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 38, $rc.Width - 2, 15), $sfBottom)
+        }
+        $g.DrawString($noteName, $fNoteW, $txtBrush, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 22, $rc.Width - 2, 16), $sfBottom)
+    }
+
+    # PASS 2: Render 10 Recessed Black Sharp/Flat Keys directly ON TOP of White Keys
+    $shadowBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(115, 0, 0, 0))
+    foreach ($bk in $blackKeySpecs) {
+        $n   = $bk.Note
+        $kId = "Key_$n"
+        if (-not $script:BlackKeyRects.ContainsKey($kId)) { continue }
+        $rc  = $script:BlackKeyRects[$kId]
+        $m   = if ($script:ProfileMap.ContainsKey($kId)) { $script:ProfileMap[$kId] } else { $null }
+        $sel = ($kId -eq $script:SelectedId)
+        $hov = ($kId -eq $script:HoveredKeyId)
+        $oct = [int][Math]::Floor(($n / 12) - 1)
+        $noteName = $noteNames[$n % 12] + $oct
+
+        # Drop shadow cast by raised black key onto the white keys beneath
+        $g.FillRectangle($shadowBrush, $rc.X - 2, $rc.Y, $rc.Width + 5, $rc.Height + 4)
+
+        $hasColor = ($m -and $m.LedColor -notin @('Auto','Off',''))
+        $active   = ($m -and $m.ActionType -ne 'None')
+
+        $bFill = if ($hasColor) {
+            Get-UiColorForColorName $m.LedColor $cKeyMapped
+        } elseif ($active) {
+            [Drawing.Color]::FromArgb(14, 116, 144)
+        } elseif ($hov) {
+            [Drawing.Color]::FromArgb(40, 48, 64)
+        } else {
+            $cKeyBlack
+        }
+
+        $bb = [Drawing.SolidBrush]::new($bFill)
+        $g.FillRectangle($bb, $rc)
+        $bb.Dispose()
+
+        # Subtle 3D glossy inner bevel highlight on the black key cap
+        $inPen = [Drawing.Pen]::new([Drawing.Color]::FromArgb(65, 255, 255, 255), 1.0)
+        $g.DrawRectangle($inPen, $rc.X + 3, $rc.Y + 2, $rc.Width - 7, $rc.Height - 8)
+        $inPen.Dispose()
+
+        $bPen = if ($sel) {
+            [Drawing.Pen]::new($cCyanSelect, 2.5)
+        } else {
+            [Drawing.Pen]::new([Drawing.Color]::FromArgb(71, 85, 105), 1.2)
+        }
+        $g.DrawRectangle($bPen, $rc.X, $rc.Y, $rc.Width - 1, $rc.Height - 1)
+        $bPen.Dispose()
+
+        if ($active -or ($m -and $m.Label -and $m.Label -ne $noteName -and $m.Label -ne "KEY $noteName")) {
+            $lblTxt = Format-CompactText $m.Label 7
+            $g.DrawString($lblTxt, $fLblB, [Drawing.Brushes]::Cyan, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 34, $rc.Width - 2, 13), $sfBottom)
+        }
+        $g.DrawString($noteName, $fNoteB, [Drawing.Brushes]::WhiteSmoke, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 20, $rc.Width - 2, 15), $sfBottom)
+    }
+    $shadowBrush.Dispose()
+    $fNoteW.Dispose(); $fLblW.Dispose(); $fNoteB.Dispose(); $fLblB.Dispose(); $sfBottom.Dispose()
+})
+
+$keybedCanvas.Add_MouseMove({
+    param($sender, $e)
+    $hit = Get-PianoKeyAtPoint $e.X $e.Y
+    $newHov = if ($hit) { $hit } else { '' }
+    if ($newHov -ne $script:HoveredKeyId) {
+        $script:HoveredKeyId = $newHov
+        $keybedCanvas.Invalidate()
+    }
+})
+
+$keybedCanvas.Add_MouseLeave({
+    if ($script:HoveredKeyId -ne '') {
+        $script:HoveredKeyId = ''
+        $keybedCanvas.Invalidate()
+    }
+})
+
+$keybedCanvas.Add_MouseDown({
+    param($sender, $e)
+    $cid = Get-PianoKeyAtPoint $e.X $e.Y
+    if (-not $cid) { return }
+    Select-ApcControl $cid
+    if ($e.Button -eq [Windows.Forms.MouseButtons]::Right) {
+        $btnTest.PerformClick()
+    } elseif ($script:ProfileMap.ContainsKey($cid)) {
+        $m = $script:ProfileMap[$cid]
+        Set-StatusBanner "Selected Piano Key $cid [$($m.Label)] -> Action=$($m.ActionType) Target='$($m.Target)' Color=$($m.LedColor) (Right-click to test)"
+    }
+})
+
+$keybedCanvas.Add_Resize({ Update-PianoKeybedGeometry })
+
+# ==============================================================================
+# 4. RIGHT PANEL: STREAM DECK PROPERTY INSPECTOR & COLOR CUSTOMIZER
+# ==============================================================================
 $inspectorGroup = [Windows.Forms.GroupBox]::new()
-$inspectorGroup.Text = 'Stream Deck Inspector, Color Customizer & Knob Calibration'
+$inspectorGroup.Text = 'STREAM DECK INSPECTOR  ·  PAD && KEY COLORING  ·  KNOB CALIBRATION'
 $inspectorGroup.Dock = 'Fill'
-$inspectorGroup.Padding = [Windows.Forms.Padding]::new(10, 8, 10, 8)
+$inspectorGroup.Padding = [Windows.Forms.Padding]::new(8, 6, 8, 6)
+$inspectorGroup.BackColor = $cInspectorBg
 $inspectorGroup.ForeColor = [Drawing.Color]::White
 $mainSplit.Controls.Add($inspectorGroup, 1, 0)
 
@@ -404,54 +1058,56 @@ $inspectorGroup.Controls.Add($inspFlow)
 function Add-InspectorLabel([string]$text, [bool]$bold = $false) {
     $l = [Windows.Forms.Label]::new()
     $l.Text = $text
+    $l.UseMnemonic = $false
     $l.AutoSize = $true
-    $l.Margin = [Windows.Forms.Padding]::new(2, 6, 2, 1)
-    $l.Font = if ($bold) { [Drawing.Font]::new('Segoe UI Semibold', 10.2, [Drawing.FontStyle]::Bold) } else { [Drawing.Font]::new('Segoe UI', 8.8) }
-    $l.ForeColor = if ($bold) { [Drawing.Color]::FromArgb(56, 189, 248) } else { [Drawing.Color]::Gainsboro }
+    $l.Margin = [Windows.Forms.Padding]::new(2, 2, 2, 0)
+    $l.Font = if ($bold) { [Drawing.Font]::new('Segoe UI Semibold', 9.5, [Drawing.FontStyle]::Bold) } else { [Drawing.Font]::new('Segoe UI', 8.2) }
+    $l.ForeColor = if ($bold) { $cCyanSelect } else { [Drawing.Color]::FromArgb(203, 213, 225) }
     [void]$inspFlow.Controls.Add($l)
     return $l
 }
 
 $lblSelectedHeader = Add-InspectorLabel 'Selected: Pad_32' $true
-$lblSelectedMeta   = Add-InspectorLabel 'Type: Pad  |  MIDI Ch 1  |  Note/CC: 32' $false
+$lblSelectedMeta   = Add-InspectorLabel 'Type: Pad  |  MIDI Ch 1  |  Code: 32' $false
 
 $chkMidiLearn = [Windows.Forms.CheckBox]::new()
 $chkMidiLearn.Text = 'Auto-Select on Physical Touch (MIDI Learn)'
 $chkMidiLearn.Checked = $true
 $chkMidiLearn.AutoSize = $true
-$chkMidiLearn.ForeColor = [Drawing.Color]::FromArgb(74, 222, 128)
-$chkMidiLearn.Margin = [Windows.Forms.Padding]::new(2, 4, 2, 1)
+$chkMidiLearn.ForeColor = $cGreenGlow
+$chkMidiLearn.Margin = [Windows.Forms.Padding]::new(2, 2, 2, 0)
 [void]$inspFlow.Controls.Add($chkMidiLearn)
 
 $chkEditOnly = [Windows.Forms.CheckBox]::new()
 $chkEditOnly.Text = 'Edit-Only Mode (Mute actions while mapping)'
 $chkEditOnly.Checked = $false
 $chkEditOnly.AutoSize = $true
-$chkEditOnly.ForeColor = [Drawing.Color]::FromArgb(251, 191, 36)
-$chkEditOnly.Margin = [Windows.Forms.Padding]::new(2, 1, 2, 2)
+$chkEditOnly.ForeColor = $cAmberGlow
+$chkEditOnly.Margin = [Windows.Forms.Padding]::new(2, 0, 2, 0)
 [void]$inspFlow.Controls.Add($chkEditOnly)
 
 $chkPickupMode = [Windows.Forms.CheckBox]::new()
-$chkPickupMode.Text = 'Knob Soft-Takeover (Pickup mode — prevent volume jumps)'
+$chkPickupMode.Text = 'Knob Soft-Takeover (Pickup mode — prevent jumps)'
 $chkPickupMode.Checked = $false
 $chkPickupMode.AutoSize = $true
 $chkPickupMode.ForeColor = [Drawing.Color]::FromArgb(125, 211, 252)
-$chkPickupMode.Margin = [Windows.Forms.Padding]::new(2, 1, 2, 4)
+$chkPickupMode.Margin = [Windows.Forms.Padding]::new(2, 0, 2, 2)
 [void]$inspFlow.Controls.Add($chkPickupMode)
 
-[void](Add-InspectorLabel 'Button / Knob Label:')
+[void](Add-InspectorLabel 'Custom Button / Knob Label:')
 $txtLabel = [Windows.Forms.TextBox]::new()
-$txtLabel.Width = 360
-$txtLabel.BackColor = $cCardBg
+$txtLabel.Width = 350
+$txtLabel.MaxLength = 36
+$txtLabel.BackColor = $cFieldBg
 $txtLabel.ForeColor = [Drawing.Color]::White
 $txtLabel.BorderStyle = 'FixedSingle'
 [void]$inspFlow.Controls.Add($txtLabel)
 
 [void](Add-InspectorLabel 'Action Type:')
 $cmbAction = [Windows.Forms.ComboBox]::new()
-$cmbAction.Width = 360
+$cmbAction.Width = 350
 $cmbAction.DropDownStyle = 'DropDownList'
-$cmbAction.BackColor = $cCardBg
+$cmbAction.BackColor = $cFieldBg
 $cmbAction.ForeColor = [Drawing.Color]::White
 [void]$cmbAction.Items.AddRange(@(
     'None',
@@ -473,44 +1129,51 @@ $cmbAction.ForeColor = [Drawing.Color]::White
 
 $lblTarget1 = Add-InspectorLabel 'Primary Target (Device / Hotkey / Command):'
 $cmbTarget1 = [Windows.Forms.ComboBox]::new()
-$cmbTarget1.Width = 360
+$cmbTarget1.Width = 350
 $cmbTarget1.DropDownStyle = 'DropDown'
-$cmbTarget1.BackColor = $cCardBg
+$cmbTarget1.BackColor = $cFieldBg
 $cmbTarget1.ForeColor = [Drawing.Color]::White
 [void]$inspFlow.Controls.Add($cmbTarget1)
 
+$lblValidation = [Windows.Forms.Label]::new()
+$lblValidation.Text = 'Ready.'
+$lblValidation.AutoSize = $true
+$lblValidation.Font = [Drawing.Font]::new('Segoe UI', 7.6)
+$lblValidation.ForeColor = [Drawing.Color]::FromArgb(148, 163, 184)
+$lblValidation.Margin = [Windows.Forms.Padding]::new(2, 0, 2, 1)
+[void]$inspFlow.Controls.Add($lblValidation)
+
 $lblTarget2 = Add-InspectorLabel 'Secondary Target (Device B for Swap A <-> B):'
 $cmbTarget2 = [Windows.Forms.ComboBox]::new()
-$cmbTarget2.Width = 360
+$cmbTarget2.Width = 350
 $cmbTarget2.DropDownStyle = 'DropDown'
-$cmbTarget2.BackColor = $cCardBg
+$cmbTarget2.BackColor = $cFieldBg
 $cmbTarget2.ForeColor = [Drawing.Color]::White
 [void]$inspFlow.Controls.Add($cmbTarget2)
 
-[void](Add-InspectorLabel 'Active / ON LED & Key Color:')
+[void](Add-InspectorLabel 'Active / ON Hardware LED & Key Color:')
 $cmbLed = [Windows.Forms.ComboBox]::new()
-$cmbLed.Width = 360
+$cmbLed.Width = 350
 $cmbLed.DropDownStyle = 'DropDownList'
-$cmbLed.BackColor = $cCardBg
+$cmbLed.BackColor = $cFieldBg
 $cmbLed.ForeColor = [Drawing.Color]::White
 [void]$cmbLed.Items.AddRange(@('Auto', 'Green', 'BlinkGreen', 'Amber', 'BlinkAmber', 'Red', 'BlinkRed', 'Off'))
 [void]$inspFlow.Controls.Add($cmbLed)
 
 [void](Add-InspectorLabel 'Standby / Muted / OFF Pad LED Color:')
 $cmbOffLed = [Windows.Forms.ComboBox]::new()
-$cmbOffLed.Width = 360
+$cmbOffLed.Width = 350
 $cmbOffLed.DropDownStyle = 'DropDownList'
-$cmbOffLed.BackColor = $cCardBg
+$cmbOffLed.BackColor = $cFieldBg
 $cmbOffLed.ForeColor = [Drawing.Color]::White
 [void]$cmbOffLed.Items.AddRange(@('Auto', 'Amber', 'Red', 'Green', 'BlinkAmber', 'BlinkRed', 'BlinkGreen', 'Off'))
 [void]$inspFlow.Controls.Add($cmbOffLed)
 
-# 1-Click Color Swatch Bar for Instant Pad/Key Coloring
-[void](Add-InspectorLabel '1-Click Instant Pad/Key Color Swatches:')
+[void](Add-InspectorLabel '1-Click Instant Hardware Pad / Key Color Swatches:')
 $swatchPanel = [Windows.Forms.FlowLayoutPanel]::new()
-$swatchPanel.Width = 365
-$swatchPanel.Height = 34
-$swatchPanel.Margin = [Windows.Forms.Padding]::new(0, 2, 0, 4)
+$swatchPanel.Width = 355
+$swatchPanel.Height = 28
+$swatchPanel.Margin = [Windows.Forms.Padding]::new(0, 1, 0, 2)
 [void]$inspFlow.Controls.Add($swatchPanel)
 
 $swatchDefs = @(
@@ -520,19 +1183,19 @@ $swatchDefs = @(
     @{ Name='BlinkGreen'; Label='Blink G'; Bg=$cGreenBlink },
     @{ Name='BlinkAmber'; Label='Blink A'; Bg=$cAmberBlink },
     @{ Name='BlinkRed';   Label='Blink R'; Bg=$cRedBlink },
-    @{ Name='Off';        Label='LED Off'; Bg=$cUnmapped }
+    @{ Name='Off';        Label='Off';     Bg=$cPadUnmapped }
 )
 foreach ($sw in $swatchDefs) {
     $sb = [Windows.Forms.Button]::new()
     $sb.Text = $sw.Label
     $sb.Tag  = $sw.Name
-    $sb.Width = 48
-    $sb.Height = 28
+    $sb.Width = 46
+    $sb.Height = 24
     $sb.Margin = [Windows.Forms.Padding]::new(2, 1, 2, 1)
     $sb.FlatStyle = 'Flat'
     $sb.BackColor = $sw.Bg
     $sb.ForeColor = [Drawing.Color]::White
-    $sb.Font = [Drawing.Font]::new('Segoe UI', 7.2, [Drawing.FontStyle]::Bold)
+    $sb.Font = [Drawing.Font]::new('Segoe UI', 7.0, [Drawing.FontStyle]::Bold)
     $sb.Add_Click({
         $chosenColor = [string]$this.Tag
         $cmbLed.SelectedItem = $chosenColor
@@ -552,27 +1215,28 @@ foreach ($sw in $swatchDefs) {
 function New-ActionBtn([string]$text, [Drawing.Color]$bg) {
     $b = [Windows.Forms.Button]::new()
     $b.Text = $text
-    $b.Width = 360
-    $b.Height = 33
-    $b.Margin = [Windows.Forms.Padding]::new(2, 4, 2, 1)
+    $b.UseMnemonic = $false
+    $b.Width = 350
+    $b.Height = 27
+    $b.Margin = [Windows.Forms.Padding]::new(2, 2, 2, 0)
     $b.FlatStyle = 'Flat'
     $b.BackColor = $bg
     $b.ForeColor = [Drawing.Color]::White
-    $b.Font = [Drawing.Font]::new('Segoe UI Semibold', 9.0, [Drawing.FontStyle]::Bold)
+    $b.Font = [Drawing.Font]::new('Segoe UI Semibold', 8.5, [Drawing.FontStyle]::Bold)
     [void]$inspFlow.Controls.Add($b)
     return $b
 }
 
-$btnSave     = New-ActionBtn 'Apply & Save Mapping' ([Drawing.Color]::FromArgb(2, 132, 199))
-$btnTest     = New-ActionBtn 'Test Selected Action Now' ([Drawing.Color]::FromArgb(22, 101, 52))
-$btnZeroKnob = New-ActionBtn 'Zero Out Selected Knob / Device (0% Mute)' ([Drawing.Color]::FromArgb(153, 27, 27))
+$btnSave     = New-ActionBtn 'Apply & Save Mapping  (Ctrl+S)' ([Drawing.Color]::FromArgb(2, 132, 199))
+$btnTest     = New-ActionBtn 'Test Selected Action Now  (Ctrl+T)' ([Drawing.Color]::FromArgb(22, 101, 52))
+$btnZeroKnob = New-ActionBtn 'Zero-Out Selected Knob / Device (0% Mute)' ([Drawing.Color]::FromArgb(153, 27, 27))
 $btnClear    = New-ActionBtn 'Clear This Control (Set None)' ([Drawing.Color]::FromArgb(71, 85, 105))
-$btnRefresh  = New-ActionBtn 'Refresh Devices & Re-Sync Pad LEDs' ([Drawing.Color]::FromArgb(51, 65, 85))
+$btnRefresh  = New-ActionBtn 'Refresh Devices & Sync LEDs  (F5)' ([Drawing.Color]::FromArgb(51, 65, 85))
 $btnTray     = New-ActionBtn 'Minimize to System Tray (Keep Active)' ([Drawing.Color]::FromArgb(49, 46, 129))
 $btnReset    = New-ActionBtn 'Reset Entire Profile to Defaults' ([Drawing.Color]::FromArgb(127, 29, 29))
 
 $inspFlow.Add_Resize({
-    $targetW = [Math]::Max(250, $inspFlow.ClientSize.Width - 26)
+    $targetW = [Math]::Max(240, $inspFlow.ClientSize.Width - 10)
     foreach ($ctrl in @($txtLabel, $cmbAction, $cmbTarget1, $cmbTarget2, $cmbLed, $cmbOffLed, $swatchPanel, $btnSave, $btnTest, $btnZeroKnob, $btnClear, $btnRefresh, $btnTray, $btnReset)) {
         if ($null -ne $ctrl) { $ctrl.Width = $targetW }
     }
@@ -583,20 +1247,50 @@ $statusBox = [Windows.Forms.TextBox]::new()
 $statusBox.Dock = 'Fill'
 $statusBox.Multiline = $true
 $statusBox.ReadOnly = $true
-$statusBox.BackColor = [Drawing.Color]::FromArgb(13, 17, 23)
+$statusBox.BackColor = [Drawing.Color]::FromArgb(11, 14, 19)
 $statusBox.ForeColor = [Drawing.Color]::FromArgb(125, 211, 252)
 $statusBox.BorderStyle = 'None'
-$statusBox.Font = [Drawing.Font]::new('Consolas', 9.5)
+$statusBox.Font = [Drawing.Font]::new('Consolas', 9.2)
 $rootLayout.Controls.Add($statusBox, 0, 2)
 
 function Set-StatusBanner([string]$eventText) {
     $defOut = @($script:AudioSnapshot | Where-Object { $_.Flow -eq 'Render' -and $_.IsDefault } | Select-Object -First 1)
     $defIn  = @($script:AudioSnapshot | Where-Object { $_.Flow -eq 'Capture' -and $_.IsDefault } | Select-Object -First 1)
-    $outStr = if ($defOut.Count) { "$($defOut[0].FriendlyName) ($($defOut[0].VolumePct)%$(if($defOut[0].Muted){' MUTED'}else{''}))" } else { 'None' }
-    $inStr  = if ($defIn.Count)  { "$($defIn[0].FriendlyName) ($($defIn[0].VolumePct)%$(if($defIn[0].Muted){' MUTED'}else{''}))" } else { 'None' }
-    $midiState = if ([GoodCube.ApcDeck.NativeBridge]::IsOpen) { 'CONNECTED (MIDI IN + LED OUT)' } else { 'DISCONNECTED (Click Refresh when plugged in)' }
-    $statusBox.Text = "MIDI: $midiState  |  Default Speaker: $outStr  |  Default Mic: $inStr`r`nLast Event: $eventText"
+    $outStr = if ($defOut.Count) { "$(Format-CompactText $defOut[0].FriendlyName 26) ($($defOut[0].VolumePct)%$(if($defOut[0].Muted){' MUTED'}else{''}))" } else { 'None' }
+    $inStr  = if ($defIn.Count)  { "$(Format-CompactText $defIn[0].FriendlyName 24) ($($defIn[0].VolumePct)%$(if($defIn[0].Muted){' MUTED'}else{''}))" } else { 'None' }
+    $midiState = if ([GoodCube.ApcDeck.NativeBridge]::IsOpen) { 'ONLINE (IN + LED OUT)' } else { 'OFFLINE' }
+    $statusBox.Text = "MIDI: $midiState  |  Speaker: $outStr  |  Mic: $inStr`r`nEvent: $(Format-CompactText $eventText 135)"
+    $headerPanel.Invalidate()
 }
+
+function Validate-InspectorInput {
+    $act = [string]$cmbAction.SelectedItem
+    $t1  = $cmbTarget1.Text.Trim()
+    if ($act -eq 'Hotkey') {
+        $parsed = Parse-HotkeyChord -ChordText $t1
+        if ($parsed) {
+            $lblValidation.Text = "✓ Valid hotkey chord ($t1)"
+            $lblValidation.ForeColor = $cGreenGlow
+        } else {
+            $lblValidation.Text = "⚠ Enter chord like Alt+Q, Win+H, Ctrl+Shift+M, or F13"
+            $lblValidation.ForeColor = $cAmberGlow
+        }
+    } elseif ($act -in @('VolumeDevice','SetDefaultDevice','SwapDevices','MuteToggle','EndpointEnableToggle')) {
+        $ep = Resolve-AudioEndpoint -MatchPattern $t1 -IncludeDisabled
+        if ($ep) {
+            $lblValidation.Text = "✓ Matched endpoint: $(Format-CompactText $ep.FriendlyName 32)"
+            $lblValidation.ForeColor = $cGreenGlow
+        } else {
+            $lblValidation.Text = "⚠ No local endpoint matching '$t1'"
+            $lblValidation.ForeColor = $cAmberGlow
+        }
+    } else {
+        $lblValidation.Text = "Action: $act"
+        $lblValidation.ForeColor = [Drawing.Color]::FromArgb(148, 163, 184)
+    }
+}
+
+$cmbTarget1.Add_TextChanged({ Validate-InspectorInput })
 
 function Populate-TargetDropdowns([string]$actionType) {
     $cur1 = $cmbTarget1.Text
@@ -611,8 +1305,8 @@ function Populate-TargetDropdowns([string]$actionType) {
         { $_ -in @('VolumeDevice','SetDefaultDevice','SwapDevices','MuteToggle','EndpointEnableToggle') } {
             foreach ($n in $audioNames) { [void]$cmbTarget1.Items.Add($n) }
         }
-        'VolumeMasterOut' { [void]$cmbTarget1.Items.Add('@DefaultRender') }
-        'VolumeDefaultMic'{ [void]$cmbTarget1.Items.Add('@DefaultCapture') }
+        'VolumeMasterOut'  { [void]$cmbTarget1.Items.Add('@DefaultRender') }
+        'VolumeDefaultMic' { [void]$cmbTarget1.Items.Add('@DefaultCapture') }
         'VolumeApp' {
             foreach ($app in @('chrome','msedge','Spotify','Speechify','Discord','vlc')) { [void]$cmbTarget1.Items.Add($app) }
         }
@@ -641,6 +1335,7 @@ function Populate-TargetDropdowns([string]$actionType) {
     $cmbTarget1.Text = $cur1
     $cmbTarget2.Text = $cur2
     $cmbTarget2.Enabled = ($actionType -eq 'SwapDevices')
+    Validate-InspectorInput
 }
 
 function Get-UiColorForColorName([string]$colorName, [Drawing.Color]$fallback) {
@@ -651,7 +1346,7 @@ function Get-UiColorForColorName([string]$colorName, [Drawing.Color]$fallback) {
         'BlinkRed'   { return $cRedBlink }
         'Amber'      { return $cAmberFill }
         'BlinkAmber' { return $cAmberBlink }
-        'Off'        { return $cUnmapped }
+        'Off'        { return $cPadUnmapped }
         default      { return $fallback }
     }
 }
@@ -660,68 +1355,25 @@ function Update-SurfaceButtonsVisuals {
     foreach ($kv in $script:ControlButtons.GetEnumerator()) {
         $cid = [string]$kv.Key
         $btn = $kv.Value
-        $m = if ($script:ProfileMap.ContainsKey($cid)) { $script:ProfileMap[$cid] } else { $null }
-        $isSelected = ($cid -eq $script:SelectedId)
+        $m   = if ($script:ProfileMap.ContainsKey($cid)) { $script:ProfileMap[$cid] } else { $null }
+        $sel = ($cid -eq $script:SelectedId)
 
-        if ($cid.StartsWith('Knob_')) {
-            $pct = if ($script:KnobValues.ContainsKey($cid)) { [int]$script:KnobValues[$cid] } else { 0 }
-            $lbl = if ($m) { $m.Label } else { $cid }
-            $stateTag = if ($pct -eq 0) { 'ZEROED (0%)' } else { "$pct%" }
-            if ($chkPickupMode.Checked -and -not $script:KnobPickedUp[$cid] -and $script:KnobLastPhys[$cid] -ge 0) {
-                $stateTag = "Target $pct% (Phys $($script:KnobLastPhys[$cid])%)"
-            }
-            $btn.Text = "$lbl`r`n[$stateTag]"
-            $btn.BackColor = if (-not $m -or $m.ActionType -eq 'None') { $cUnmapped } elseif ($pct -eq 0) { $cKnobZeroBg } else { $cKnobBg }
-            $btn.ForeColor = [Drawing.Color]::White
-        } elseif ($cid.StartsWith('Pad_')) {
-            $vel = Get-PadLedVelocity -Mapping $m -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
-            $btn.BackColor = switch ($vel) {
-                1 { $cGreenFill }
-                2 { $cGreenBlink }
-                3 { $cRedFill }
-                4 { $cRedBlink }
-                5 { $cAmberFill }
-                6 { $cAmberBlink }
-                default { $cUnmapped }
-            }
-            $btn.ForeColor = [Drawing.Color]::White
-            $btn.Text = if ($m -and ($m.ActionType -ne 'None' -or $vel -gt 0)) { $m.Label } else { "PAD $($m.Code)`r`n(Empty)" }
-        } elseif ($cid.StartsWith('Scene_') -or $cid.StartsWith('Track_')) {
-            $active = ($m -and $m.ActionType -ne 'None')
-            $defaultBg = if ($cid.StartsWith('Scene_')) { $cGreenFill } else { $cRedFill }
-            $btn.BackColor = if (-not $active -and (-not $m -or $m.LedColor -in @('Auto','Off'))) { $cUnmapped } else { Get-UiColorForColorName $m.LedColor $defaultBg }
-            $btn.ForeColor = [Drawing.Color]::White
-            $btn.Text = if ($m) { $m.Label } else { $cid }
-        } elseif ($cid.StartsWith('Key_')) {
-            $note = [int]($cid -replace '^Key_','')
-            $isSharp = (($note % 12) -in @(1, 3, 6, 8, 10))
-            $hasCustomColor = ($m -and $m.LedColor -notin @('Auto','Off',''))
-            $active = ($m -and $m.ActionType -ne 'None')
-            if ($hasCustomColor) {
-                $btn.BackColor = Get-UiColorForColorName $m.LedColor $cKeyMapped
-                $btn.ForeColor = [Drawing.Color]::White
-                $btn.Text = $m.Label
-            } elseif ($active) {
-                $btn.BackColor = $cKeyMapped
-                $btn.ForeColor = [Drawing.Color]::White
-                $btn.Text = $m.Label
-            } else {
-                $btn.BackColor = if ($isSharp) { $cKeyBlack } else { $cKeyWhite }
-                $btn.ForeColor = if ($isSharp) { [Drawing.Color]::White } else { [Drawing.Color]::Black }
-                $noteNames = @('C','C#','D','D#','E','F','F#','G','G#','A','A#','B')
-                $oct = [int][math]::Floor(($note / 12) - 1)
-                $btn.Text = $noteNames[$note % 12] + $oct
-            }
+        if ($cid.StartsWith('Knob_') -or $cid.StartsWith('Pad_') -or $cid.StartsWith('Scene_') -or $cid.StartsWith('Track_')) {
+            $btn.Invalidate()
+            continue
         }
 
-        if ($isSelected) {
-            $btn.FlatAppearance.BorderColor = $cCyanBorder
-            $btn.FlatAppearance.BorderSize = 3
-        } else {
-            $btn.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(51, 65, 85)
-            $btn.FlatAppearance.BorderSize = 1
+        if ($cid.StartsWith('Trans_')) {
+            $active = ($m -and $m.ActionType -ne 'None')
+            $btn.BackColor = if ($active) { Get-UiColorForColorName $m.LedColor ([Drawing.Color]::FromArgb(30, 58, 95)) } else { $cPadUnmapped }
+            $btn.ForeColor = [Drawing.Color]::White
+            $btn.Text = if ($m -and $m.Label) { Format-CompactText $m.Label 16 } else { $cid }
+            $btn.FlatAppearance.BorderColor = if ($sel) { $cCyanSelect } else { [Drawing.Color]::FromArgb(71, 85, 105) }
+            $btn.FlatAppearance.BorderSize  = if ($sel) { 2 } else { 1 }
+            continue
         }
     }
+    $keybedCanvas.Invalidate()
 }
 
 function Select-ApcControl([string]$cid) {
@@ -729,7 +1381,7 @@ function Select-ApcControl([string]$cid) {
     $script:SelectedId = $cid
     $m = $script:ProfileMap[$cid]
     $lblSelectedHeader.Text = "Selected: $($m.ControlId) — $($m.Label)"
-    $lblSelectedMeta.Text   = "Type: $($m.ControlKind)  |  MIDI Ch $($m.Channel + 1)  |  Code: $($m.Code)"
+    $lblSelectedMeta.Text   = "Kind: $($m.ControlKind)  |  MIDI Ch $($m.Channel + 1)  |  Code: $($m.Code)"
     $txtLabel.Text          = [string]$m.Label
     $cmbAction.SelectedItem = if ($cmbAction.Items.Contains([string]$m.ActionType)) { [string]$m.ActionType } else { 'None' }
     Populate-TargetDropdowns ([string]$m.ActionType)
@@ -749,7 +1401,7 @@ foreach ($btn in $script:ControlButtons.Values) {
         Select-ApcControl $cid
         if ($script:ProfileMap.ContainsKey($cid)) {
             $m = $script:ProfileMap[$cid]
-            Set-StatusBanner "Selected $cid [$($m.Label)] -> Action=$($m.ActionType) Target='$($m.Target)' LED=$($m.LedColor) (Right-click pad to test action)"
+            Set-StatusBanner "Selected $cid [$($m.Label)] -> Action=$($m.ActionType) Target='$($m.Target)' LED=$($m.LedColor) (Right-click to test)"
         }
     })
     $btn.Add_MouseUp({
@@ -776,7 +1428,7 @@ $btnSave.Add_Click({
     $m.SecondaryTarget = $cmbTarget2.Text.Trim()
     $m.LedColor        = [string]$cmbLed.SelectedItem
     $m.OffLedColor     = [string]$cmbOffLed.SelectedItem
-    $path = Save-ApcProfile -ProfileMap $script:ProfileMap
+    $null = Save-ApcProfile -ProfileMap $script:ProfileMap
     Clear-AudioEndpointCache
     $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
@@ -788,34 +1440,35 @@ $btnTest.Add_Click({
     $cid = $script:SelectedId
     if (-not $script:ProfileMap.ContainsKey($cid)) { return }
     $m = $script:ProfileMap[$cid]
-    if ($m.ControlKind -eq 'Knob') {
-        $msg = Set-AudioVolumeByMapping -Mapping $m -MidiValue 96
-        $script:KnobValues[$cid] = [int][math]::Round((Convert-MidiCcToScalar 96) * 100)
+    if ($cid.StartsWith('Knob_')) {
+        $res = Set-AudioVolumeByMapping -Mapping $m -MidiValue 64
+        $script:KnobValues[$cid] = 50
     } else {
-        $msg = Invoke-ApcAction -Mapping $m
+        $res = Invoke-ApcAction -Mapping $m
     }
     $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
+    $script:BtSnapshot    = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
     Update-SurfaceButtonsVisuals
-    Set-StatusBanner "[TEST] $cid -> $msg"
+    Set-StatusBanner "[TEST $cid] $res"
 })
 
 $btnZeroKnob.Add_Click({
     $cid = $script:SelectedId
     if (-not $script:ProfileMap.ContainsKey($cid)) { return }
     $m = $script:ProfileMap[$cid]
-    if ($m.ControlKind -eq 'Knob') {
+    if ($cid.StartsWith('Knob_')) {
+        $script:KnobValues[$cid]   = 0
+        $script:KnobPickedUp[$cid] = $true
         $msg = Set-AudioVolumeByMapping -Mapping $m -MidiValue 0 -AutoMuteAtZero
-        $script:KnobValues[$cid] = 0
-        $script:KnobPickedUp[$cid] = $false
     } else {
-        $ep = Resolve-AudioEndpoint -MatchPattern $m.Target
+        $ep = Resolve-AudioEndpoint -MatchPattern $m.Target -UseCache
         if ($ep) {
             $ep.AudioEndpointVolume.MasterVolumeLevelScalar = [float]0.0
             $ep.AudioEndpointVolume.Mute = $true
             $msg = "$($ep.FriendlyName): 0% (ZEROED/MUTED)"
         } else {
-            $msg = "Select a knob or audio device button to zero out."
+            $msg = 'Select a knob or audio device button to zero out.'
         }
     }
     $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
@@ -828,11 +1481,11 @@ $btnClear.Add_Click({
     $cid = $script:SelectedId
     if (-not $script:ProfileMap.ContainsKey($cid)) { return }
     $m = $script:ProfileMap[$cid]
-    $m.ActionType = 'None'
-    $m.Target = ''
+    $m.ActionType      = 'None'
+    $m.Target          = ''
     $m.SecondaryTarget = ''
-    $m.LedColor = 'Off'
-    $m.OffLedColor = 'Off'
+    $m.LedColor        = 'Off'
+    $m.OffLedColor     = 'Off'
     $null = Save-ApcProfile -ProfileMap $script:ProfileMap
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
     Select-ApcControl $cid
@@ -874,17 +1527,36 @@ $btnReset.Add_Click({
     Set-StatusBanner 'Reset entire profile to default workstation audio/Bluetooth layout.'
 })
 
+# Keyboard shortcuts (Ctrl+S Save, Ctrl+T Test, F5 Refresh, Ctrl+0 Zero-Out)
+$form.Add_KeyDown({
+    param($sender, $e)
+    if ($e.Control -and $e.KeyCode -eq [Windows.Forms.Keys]::S) {
+        $e.SuppressKeyPress = $true
+        $btnSave.PerformClick()
+    } elseif ($e.Control -and $e.KeyCode -eq [Windows.Forms.Keys]::T) {
+        $e.SuppressKeyPress = $true
+        $btnTest.PerformClick()
+    } elseif ($e.KeyCode -eq [Windows.Forms.Keys]::F5) {
+        $e.SuppressKeyPress = $true
+        $btnRefresh.PerformClick()
+    } elseif ($e.Control -and $e.KeyCode -eq [Windows.Forms.Keys]::D0) {
+        $e.SuppressKeyPress = $true
+        $btnZeroKnob.PerformClick()
+    }
+})
+
 function Restore-MainWindow {
     $form.Show()
     $form.WindowState = 'Normal'
     $wa = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    $w  = [Math]::Min([Math]::Max($form.Width, 1180), $wa.Width - 40)
+    $w  = [Math]::Min([Math]::Max($form.Width, 1200), $wa.Width - 40)
     $h  = [Math]::Min([Math]::Max($form.Height, 740), $wa.Height - 40)
     if (-not $wa.Contains($form.Bounds)) {
         $x = $wa.X + [int](($wa.Width - $w) / 2)
         $y = $wa.Y + [int](($wa.Height - $h) / 2)
         $form.Bounds = [Drawing.Rectangle]::new($x, $y, $w, $h)
     }
+    Update-PianoKeybedGeometry
     $form.Activate()
     [GoodCube.ApcDeck.NativeBridge]::BringFormToFront($form.Handle)
 }
@@ -918,13 +1590,23 @@ $midiTimer.Add_Tick({
             Restore-MainWindow
         }
         if ($SmokeTestUi) {
+            if ($SavePreviewPath) {
+                try {
+                    Update-PianoKeybedGeometry
+                    Update-SurfaceButtonsVisuals
+                    $form.Refresh()
+                    $bmp = [Drawing.Bitmap]::new($form.Width, $form.Height)
+                    $form.DrawToBitmap($bmp, [Drawing.Rectangle]::new(0, 0, $form.Width, $form.Height))
+                    $bmp.Save($SavePreviewPath, [Drawing.Imaging.ImageFormat]::Png)
+                    $bmp.Dispose()
+                } catch { }
+            }
             [Console]::WriteLine("SMOKE_UI_OK: Handle=$($form.Handle) Visible=$([GoodCube.ApcDeck.NativeBridge]::IsWindowVisible($form.Handle)) Title=$($form.Text) MidiOpen=$([GoodCube.ApcDeck.NativeBridge]::IsOpen)")
             $form.Close()
             return
         }
     }
 
-    # Check single-instance wake-up or stop signals
     if ($stopEvent.WaitOne(0)) {
         $form.Close()
         return
@@ -938,7 +1620,6 @@ $midiTimer.Add_Tick({
     $needUiRefresh = $false
     $lastBanner = $null
 
-    # Coalesce rapid knob CC changes per 16ms frame
     $latestCc = @{}
     while ([GoodCube.ApcDeck.NativeBridge]::EventQueue.TryDequeue([ref]$ev)) {
         if ($ev.Command -eq 0xB0 -and $ev.Data1 -ge 48 -and $ev.Data1 -le 55) {
@@ -948,6 +1629,7 @@ $midiTimer.Add_Tick({
                 if ($ev.Data1 -ge 0 -and $ev.Data1 -le 39) { "Pad_$($ev.Data1)" }
                 elseif ($ev.Data1 -ge 64 -and $ev.Data1 -le 71) { "Track_$($ev.Data1)" }
                 elseif ($ev.Data1 -ge 81 -and $ev.Data1 -le 86) { "Scene_$($ev.Data1)" }
+                elseif ($ev.Data1 -in @(91, 93, 98)) { "Trans_$($ev.Data1)" }
                 else { "Pad_$($ev.Data1)" }
             } else {
                 "Key_$($ev.Data1)"
@@ -963,7 +1645,7 @@ $midiTimer.Add_Tick({
                     $res = Invoke-ApcAction -Mapping $m
                     $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
                     if ($m.ActionType -eq 'BluetoothConnect') {
-                        $script:BtSnapshot = @(Get-PairedBluetoothDevices)
+                        $script:BtSnapshot = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
                     }
                     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
                     $needUiRefresh = $true
@@ -1041,8 +1723,9 @@ $syncTimer.Add_Tick({
 })
 
 $form.Add_Load({
+    Update-PianoKeybedGeometry
     Select-ApcControl 'Pad_32'
-    Set-StatusBanner "Ready. Turn any knob (K1–K8), press any pad, or press any piano key on your Akai APC Key 25."
+    Set-StatusBanner 'Ready. Turn any knob (K1–K8), press any pad, button, or piano key on your Akai APC Key 25.'
     if (-not $Minimized) {
         Restore-MainWindow
     }
@@ -1058,7 +1741,9 @@ try {
     try { $midiTimer.Stop(); $midiTimer.Dispose() } catch { }
     try { $syncTimer.Stop(); $syncTimer.Dispose() } catch { }
     try { $trayIcon.Visible = $false; $trayIcon.Dispose() } catch { }
-    try { [GoodCube.ApcDeck.NativeBridge]::ClearAllPadLeds() } catch { }
+    if (-not $SmokeTestUi) {
+        try { [GoodCube.ApcDeck.NativeBridge]::ClearAllPadLeds() } catch { }
+    }
     try { [GoodCube.ApcDeck.NativeBridge]::CloseDevice() } catch { }
     try { $showEvent.Dispose() } catch { }
     try { $stopEvent.Dispose() } catch { }

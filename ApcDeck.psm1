@@ -481,6 +481,7 @@ namespace GoodCube.ApcDeck {
 # Sub-millisecond CoreAudio MMDevice cache for ultra-responsive knob turns
 $script:EndpointCache     = @{}
 $script:SharedEnumerator  = $null
+$script:BtConnectBusy     = $false
 
 function Clear-AudioEndpointCache {
     $script:EndpointCache.Clear()
@@ -812,45 +813,53 @@ function Invoke-ApcAction {
         }
         'BluetoothConnect' {
             $targetName = $Mapping.Target
-            # Run WinRT RFCOMM Handsfree wake-up in an isolated MTA runspace so STA UI never blocks
-            $ps = [PowerShell]::Create()
-            $null = $ps.AddScript({
-                param($tName)
-                $btDir = Join-Path $env:APPDATA 'Elgato\StreamDeck\Plugins\me.rumkee.bluetooth.monitor.sdPlugin'
-                if (-not (Test-Path $btDir)) { return "Stream Deck Bluetooth plugin not found." }
-                $null = [Reflection.Assembly]::LoadFrom((Join-Path $btDir 'StreamDeckLib.dll'))
-                $null = [Reflection.Assembly]::LoadFrom((Join-Path $btDir 'Microsoft.Windows.SDK.NET.dll'))
-                $null = [Reflection.Assembly]::LoadFrom((Join-Path $btDir 'WinRT.Runtime.dll'))
-                $null = [Reflection.Assembly]::LoadFrom((Join-Path $btDir 'Microsoft.Extensions.Logging.Abstractions.dll'))
-                $null = [Reflection.Assembly]::LoadFrom((Join-Path $btDir 'me.rumkee.bluetooth.monitor.dll'))
-                $logger = [Microsoft.Extensions.Logging.Abstractions.NullLogger]::Instance
-                $dict = [BluetoothController.Helpers.BluetoothDeviceHelper]::GetAllPairedBluetoothDevices($logger).GetAwaiter().GetResult()
-                $devId = $null
-                $devName = $tName
-                foreach ($kv in $dict.GetEnumerator()) {
-                    if ($kv.Key -ieq $tName -or $kv.Value -ieq $tName -or $kv.Key.IndexOf($tName, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-                        $devName = [string]$kv.Key
-                        $devId   = [string]$kv.Value
-                        break
+            if ($script:BtConnectBusy) {
+                return "Bluetooth connection already in progress — please wait."
+            }
+            $script:BtConnectBusy = $true
+            try {
+                # Run WinRT RFCOMM Handsfree wake-up in an isolated MTA runspace so STA UI never blocks
+                $ps = [PowerShell]::Create()
+                $null = $ps.AddScript({
+                    param($tName)
+                    $btDir = Join-Path $env:APPDATA 'Elgato\StreamDeck\Plugins\me.rumkee.bluetooth.monitor.sdPlugin'
+                    if (-not (Test-Path $btDir)) { return "Stream Deck Bluetooth plugin not found." }
+                    $null = [Reflection.Assembly]::LoadFrom((Join-Path $btDir 'StreamDeckLib.dll'))
+                    $null = [Reflection.Assembly]::LoadFrom((Join-Path $btDir 'Microsoft.Windows.SDK.NET.dll'))
+                    $null = [Reflection.Assembly]::LoadFrom((Join-Path $btDir 'WinRT.Runtime.dll'))
+                    $null = [Reflection.Assembly]::LoadFrom((Join-Path $btDir 'Microsoft.Extensions.Logging.Abstractions.dll'))
+                    $null = [Reflection.Assembly]::LoadFrom((Join-Path $btDir 'me.rumkee.bluetooth.monitor.dll'))
+                    $logger = [Microsoft.Extensions.Logging.Abstractions.NullLogger]::Instance
+                    $dict = [BluetoothController.Helpers.BluetoothDeviceHelper]::GetAllPairedBluetoothDevices($logger).GetAwaiter().GetResult()
+                    $devId = $null
+                    $devName = $tName
+                    foreach ($kv in $dict.GetEnumerator()) {
+                        if ($kv.Key -ieq $tName -or $kv.Value -ieq $tName -or $kv.Key.IndexOf($tName, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                            $devName = [string]$kv.Key
+                            $devId   = [string]$kv.Value
+                            break
+                        }
                     }
+                    if (-not $devId) { return "Paired Bluetooth device '$tName' not found." }
+                    $helper = [BluetoothController.Helpers.BluetoothDeviceHelper]::new()
+                    $loaded = $helper.LoadDeviceFromId($devId, $logger).GetAwaiter().GetResult()
+                    if (-not $loaded) { return "Could not load Bluetooth device '$devName'." }
+                    $ok = $helper.Connect(4382, $logger).GetAwaiter().GetResult()
+                    return "Bluetooth '$devName' RFCOMM wake-up sent (Result=$ok, Status=$($helper.Status))."
+                }).AddArgument($targetName)
+                $async = $ps.BeginInvoke()
+                if ($async.AsyncWaitHandle.WaitOne(4500)) {
+                    $res = @($ps.EndInvoke($async)) -join ' '
+                    $ps.Dispose()
+                    Clear-AudioEndpointCache
+                    return $res
+                } else {
+                    $ps.Dispose()
+                    Clear-AudioEndpointCache
+                    return "Bluetooth '$targetName' wake-up dispatched in background."
                 }
-                if (-not $devId) { return "Paired Bluetooth device '$tName' not found." }
-                $helper = [BluetoothController.Helpers.BluetoothDeviceHelper]::new()
-                $loaded = $helper.LoadDeviceFromId($devId, $logger).GetAwaiter().GetResult()
-                if (-not $loaded) { return "Could not load Bluetooth device '$devName'." }
-                $ok = $helper.Connect(4382, $logger).GetAwaiter().GetResult()
-                return "Bluetooth '$devName' RFCOMM wake-up sent (Result=$ok, Status=$($helper.Status))."
-            }).AddArgument($targetName)
-            $async = $ps.BeginInvoke()
-            if ($async.AsyncWaitHandle.WaitOne(4500)) {
-                $res = @($ps.EndInvoke($async)) -join ' '
-                $ps.Dispose()
-                Clear-AudioEndpointCache
-                return $res
-            } else {
-                $ps.Dispose()
-                Clear-AudioEndpointCache
-                return "Bluetooth '$targetName' wake-up dispatched in background."
+            } finally {
+                $script:BtConnectBusy = $false
             }
         }
         'Hotkey' {
@@ -1114,6 +1123,11 @@ function New-DefaultApcProfile {
     Add-Map 'Track_70' 'Track' 0 70 'SEND'        'SystemCommand' 'bt-settings'     '' 'Red' 'Off'
     Add-Map 'Track_71' 'Track' 0 71 'DEVICE'      'SystemCommand' 'sound-settings'  '' 'Red' 'Off'
 
+    # 3 Dedicated Transport & Shift Buttons Below Knob Bank (Notes 91, 93, 98 on Channel 1)
+    Add-Map 'Trans_91' 'Transport' 0 91 'PLAY / PAUSE' 'MediaKey'   'PlayPause' '' 'Green' 'Off'
+    Add-Map 'Trans_93' 'Transport' 0 93 'REC (DICTATE)' 'Hotkey'    'Win+H'     '' 'Red'   'Off'
+    Add-Map 'Trans_98' 'Transport' 0 98 'SHIFT (BAL)'  'BalanceAll' ''          '' 'Amber' 'Off'
+
     # 25 Piano Keys (Channel 2, Notes 48..72 -> C3..C5)
     $noteNames = @('C','C#','D','D#','E','F','F#','G','G#','A','A#','B')
     for ($n = 48; $n -le 72; $n++) {
@@ -1126,28 +1140,31 @@ function New-DefaultApcProfile {
 }
 
 function Load-ApcProfile {
-    if (Test-Path -LiteralPath $script:ConfigPath) {
-        try {
-            $raw = Get-Content -Raw -LiteralPath $script:ConfigPath | ConvertFrom-Json
-            if ($raw -and $raw.Controls) {
-                $map = @{}
-                foreach ($c in $raw.Controls) {
-                    if (-not $c.PSObject.Properties['OffLedColor']) {
-                        $c | Add-Member -NotePropertyName 'OffLedColor' -NotePropertyValue 'Auto' -Force
+    $candidates = @($script:ConfigPath, "$($script:ConfigPath).bak")
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) {
+            try {
+                $raw = Get-Content -Raw -LiteralPath $candidate -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                if ($raw -and $raw.Controls) {
+                    $map = @{}
+                    foreach ($c in $raw.Controls) {
+                        if (-not $c.PSObject.Properties['OffLedColor']) {
+                            $c | Add-Member -NotePropertyName 'OffLedColor' -NotePropertyValue 'Auto' -Force
+                        }
+                        $map[[string]$c.ControlId] = $c
                     }
-                    $map[[string]$c.ControlId] = $c
-                }
-                $added = $false
-                foreach ($def in (New-DefaultApcProfile)) {
-                    if (-not $map.ContainsKey($def.ControlId)) {
-                        $map[$def.ControlId] = $def
-                        $added = $true
+                    $added = $false
+                    foreach ($def in (New-DefaultApcProfile)) {
+                        if (-not $map.ContainsKey($def.ControlId)) {
+                            $map[$def.ControlId] = $def
+                            $added = $true
+                        }
                     }
+                    if ($added) { $null = Save-ApcProfile -ProfileMap $map }
+                    return $map
                 }
-                if ($added) { $null = Save-ApcProfile -ProfileMap $map }
-                return $map
-            }
-        } catch { }
+            } catch { }
+        }
     }
     $map = @{}
     foreach ($def in (New-DefaultApcProfile)) {
@@ -1166,7 +1183,14 @@ function Save-ApcProfile {
         Device    = 'Akai APC Key 25'
         Controls  = $ordered
     }
-    $payload | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $script:ConfigPath -Encoding utf8
+    $tmpPath = "$($script:ConfigPath).tmp"
+    $bakPath = "$($script:ConfigPath).bak"
+    $json = $payload | ConvertTo-Json -Depth 6
+    [IO.File]::WriteAllText($tmpPath, $json, [Text.Encoding]::UTF8)
+    if (Test-Path -LiteralPath $script:ConfigPath) {
+        Copy-Item -LiteralPath $script:ConfigPath -Destination $bakPath -Force -ErrorAction SilentlyContinue
+    }
+    Move-Item -LiteralPath $tmpPath -Destination $script:ConfigPath -Force
     return $script:ConfigPath
 }
 

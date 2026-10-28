@@ -4,8 +4,13 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ApcDeck.psm1') -Force -DisableNameChecking
 
 $profileMap = Load-ApcProfile
-if ($profileMap.Count -ne 87) {
-    throw "Expected 87 controls in default APC Key 25 profile, got $($profileMap.Count)."
+if ($profileMap.Count -ne 90) {
+    throw "Expected 90 controls in default APC Key 25 profile, got $($profileMap.Count)."
+}
+foreach ($tid in @('Trans_91', 'Trans_93', 'Trans_98')) {
+    if (-not $profileMap.ContainsKey($tid)) {
+        throw "Expected physical transport/shift control $tid in default profile."
+    }
 }
 
 # 1. Verify knob zero-out & full-scale deadzone clamping
@@ -85,7 +90,7 @@ if ((Get-PadLedVelocity -Mapping $customStandby -AudioSnapshot $fakeAudio -BtSna
 # 4. Verify live snapshot mode
 $snapJson = & pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Open-ApcDeck.ps1') -Mode Snapshot
 $snap = $snapJson | ConvertFrom-Json
-if ($snap.ControlCount -ne 87) {
+if ($snap.ControlCount -ne 90) {
     throw "Snapshot reported unexpected ControlCount: $($snap.ControlCount)"
 }
 
