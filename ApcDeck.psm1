@@ -134,24 +134,126 @@ namespace GoodCube.ApcDeck {
         [DllImport("user32.dll")]
         private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
+        [DllImport("user32.dll")]
+        private static extern bool EnumDesktopWindows(IntPtr hDesktop, EnumWindowsProc lpfn, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+        [DllImport("user32.dll")]
+        private static extern bool CloseDesktop(IntPtr hDesktop);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetThreadDesktop(uint dwThreadId);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, System.Text.StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
+
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct STARTUPINFOW {
+            public int cb;
+            public string lpReserved;
+            public string lpDesktop;
+            public string lpTitle;
+            public int dwX;
+            public int dwY;
+            public int dwXSize;
+            public int dwYSize;
+            public int dwXCountChars;
+            public int dwYCountChars;
+            public int dwFillAttribute;
+            public int dwFlags;
+            public short wShowWindow;
+            public short cbReserved2;
+            public IntPtr lpReserved2;
+            public IntPtr hStdInput;
+            public IntPtr hStdOutput;
+            public IntPtr hStdError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROCESS_INFORMATION {
+            public IntPtr hProcess;
+            public IntPtr hThread;
+            public int dwProcessId;
+            public int dwThreadId;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool CreateProcessW(
+            string lpApplicationName,
+            string lpCommandLine,
+            IntPtr lpProcessAttributes,
+            IntPtr lpThreadAttributes,
+            bool bInheritHandles,
+            uint dwCreationFlags,
+            IntPtr lpEnvironment,
+            string lpCurrentDirectory,
+            ref STARTUPINFOW lpStartupInfo,
+            out PROCESS_INFORMATION lpProcessInformation);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        public static string GetCurrentDesktopName() {
+            IntPtr hDesk = GetThreadDesktop(GetCurrentThreadId());
+            if (hDesk == IntPtr.Zero) return "";
+            var sb = new System.Text.StringBuilder(256);
+            int len = 0;
+            if (GetUserObjectInformation(hDesk, 2, sb, 256, out len)) {
+                return sb.ToString();
+            }
+            return "";
+        }
+
+        public static int LaunchOnDefaultDesktop(string commandLine, string workingDir) {
+            var si = new STARTUPINFOW();
+            si.cb = Marshal.SizeOf(typeof(STARTUPINFOW));
+            si.lpDesktop = @"WinSta0\Default";
+            si.dwFlags = 1; // STARTF_USESHOWWINDOW
+            si.wShowWindow = 0; // SW_HIDE
+            PROCESS_INFORMATION pi;
+            uint flags = 0x00000010; // CREATE_NEW_CONSOLE
+            if (CreateProcessW(null, commandLine, IntPtr.Zero, IntPtr.Zero, false, flags, IntPtr.Zero, workingDir, ref si, out pi)) {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+                return pi.dwProcessId;
+            }
+            return 0;
+        }
 
         public static IntPtr FindWindowByTitle(string exactTitle) {
             if (string.IsNullOrEmpty(exactTitle)) return IntPtr.Zero;
             IntPtr found = IntPtr.Zero;
-            EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+            EnumWindowsProc cb = delegate(IntPtr hWnd, IntPtr lParam) {
                 var sb = new System.Text.StringBuilder(256);
                 if (GetWindowText(hWnd, sb, 256) > 0) {
                     string t = sb.ToString();
                     if (string.Equals(t, exactTitle, StringComparison.OrdinalIgnoreCase) ||
                         t.IndexOf("Akai APC Key 25 Stream Deck Controller", StringComparison.OrdinalIgnoreCase) >= 0) {
                         found = hWnd;
-                        if (IsWindowVisible(hWnd)) return false; // Prefer visible match immediately
+                        if (IsWindowVisible(hWnd)) return false;
                     }
                 }
                 return true;
-            }, IntPtr.Zero);
+            };
+            EnumWindows(cb, IntPtr.Zero);
+            if (found == IntPtr.Zero) {
+                IntPtr hDef = OpenDesktop("Default", 0, false, 0x0041); // DESKTOP_READOBJECTS | DESKTOP_ENUMERATE
+                if (hDef != IntPtr.Zero) {
+                    try {
+                        EnumDesktopWindows(hDef, cb, IntPtr.Zero);
+                    } finally {
+                        CloseDesktop(hDef);
+                    }
+                }
+            }
             return found;
         }
 

@@ -48,6 +48,16 @@ if ($Mode -eq 'Snapshot') {
     exit 0
 }
 
+# Ensure interactive GUI always opens on the user's real desktop (WinSta0\Default),
+# never on an isolated background/sandbox desktop (such as exebox-*).
+$curDesktop = [GoodCube.ApcDeck.NativeBridge]::GetCurrentDesktopName()
+if ($curDesktop -and $curDesktop -ne 'Default' -and -not $SmokeTestUi) {
+    $cmdLine = "`"C:\Program Files\PowerShell\7\pwsh.exe`" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -STA -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    if ($Minimized) { $cmdLine += ' -Minimized' }
+    [void][GoodCube.ApcDeck.NativeBridge]::LaunchOnDefaultDesktop($cmdLine, $PSScriptRoot)
+    exit 0
+}
+
 # Single-instance check: if APC-DECK is already running, signal it to pop its window to the front.
 # If the existing instance is unresponsive or windowless, automatically self-heal and replace it.
 $windowTitle = 'GOOD-CUBE | Akai APC Key 25 Stream Deck Controller & Mapper'
