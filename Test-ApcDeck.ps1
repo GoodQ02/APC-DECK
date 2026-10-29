@@ -87,6 +87,10 @@ if ((Get-PadLedVelocity -Mapping $customStandby -AudioSnapshot $fakeAudio -BtSna
     throw 'Expected custom BlinkAmber standby override to return velocity 6.'
 }
 
+# Verify audio dispatch precedes inspector work without changing real volumes.
+& pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Test-ApcKnobDispatch.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Knob dispatch regression test failed.' }
+
 # 4. Verify live snapshot mode
 $snapJson = & pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Open-ApcDeck.ps1') -Mode Snapshot
 $snap = $snapJson | ConvertFrom-Json

@@ -12,6 +12,8 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 
 ## 1. Executive Summary & Live State
 
+**Latest verified change (2026-10-28):** queued knob volume updates now run before one coalesced inspector selection. This is a local-only change on `main`; publication is **not authorized**. See Section 7 for measured results and their limits. The earlier `~105 ms` sweep is a historical observation, not a guaranteed current baseline.
+
 - **Repository Root**: `C:\Tools\apc-midi-deck`
 - **GitHub Remote**: `https://github.com/GoodQ02/APC-DECK` (`origin/main`)
 - **Hardware Target**: **Akai Professional APC Key 25 (MK1)** (`USB\VID_09E8&PID_0027`, WinMM Input Index `0`, WinMM Output Index `1`)
@@ -53,7 +55,7 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 | `C:\Tools\bin\apc-deck.vbs` | Windowless VBScript launcher (`sh.Run psCmd, 0, False`) used by the Desktop shortcut and `apc-deck.cmd` so Windows 11 never intercepts GUI launches into a Windows Terminal (`wt.exe`) tab. |
 | `C:\Tools\bin\apc-deck.cmd` | Command-line shim on `PATH`. Delegates GUI/Tray launches to `wscript.exe "C:\Tools\bin\apc-deck.vbs"` and passes CLI modes (`-Mode Snapshot`, `-Mode Stop`, `-Mode ResetDefaults`, `-SmokeTestUi`) directly to `pwsh.exe`. |
 | `C:\Users\jdben\Desktop\APC-DECK.lnk` | User Desktop shortcut (`TargetPath = C:\Windows\System32\wscript.exe`, `Arguments = "C:\Tools\bin\apc-deck.vbs"`, `IconLocation = C:\Tools\apc-midi-deck\assets\apc-deck.ico,0`). |
-| `%APPDATA%\GoodCube\ApcMidiDeck\apc-key25-profile.json` | Saved user profile JSON (auto-created and auto-migrated to 90 controls by `Load-ApcProfile`). |
+| `%LOCALAPPDATA%\GoodCube\ApcMidiDeck\profile.json` | Actual saved user profile path used by `ApcDeck.psm1` (auto-created and auto-migrated to 90 controls by `Load-ApcProfile`). Preserved byte-for-byte during the latest fix. |
 
 ---
 
@@ -138,9 +140,46 @@ Validates:
 3. `Parse-HotkeyChord` parses modifier chords (`Alt+Q`, `Ctrl+Shift+M`, `F13`).
 4. `Get-PadLedVelocity` computes hardware LED velocity codes (`1` Green, `2` BlinkGreen, `3` Red, `4` BlinkRed, `5` Amber, `6` BlinkAmber, `0` Off) across active, standby, muted, disabled, and custom override states.
 5. `Open-ApcDeck.ps1 -Mode Snapshot` returns valid JSON with `ControlCount = 90`.
-6. `Open-ApcDeck.ps1 -SmokeTestUi` renders the WinForms UI, opens MIDI ports, sweeps all 8 knobs (`Knob_48`–`Knob_55`), and verifies **`KnobSweepMs < 500 ms`** (typically `~105 ms`).
+6. `Open-ApcDeck.ps1 -SmokeTestUi` renders the WinForms UI, attempts to open MIDI ports, and times selecting/updating all 8 knobs (`Knob_48`–`Knob_55`) plus returning selection to `Pad_32`. The suite rejects `KnobSweepMs > 500 ms`. This is a startup UI measurement, not a MIDI-to-volume measurement; see Section 7 for current results.
+7. `Test-ApcKnobDispatch.ps1` extracts the actual knob dispatch block and uses recording sinks to check that all queued volume calls precede one inspector selection. Eight cases cover ordering, edit-only, pickup waiting/crossing/zero, MIDI Learn disabled, hidden windows, and an already-selected knob. It performs no audio writes.
 
 ### Refresh UI Screenshot Asset (`assets/apc-deck-ui.png`)
 ```powershell
 pwsh -NoLogo -NoProfile -STA -File "C:\Tools\apc-midi-deck\Open-ApcDeck.ps1" -SmokeTestUi -SavePreviewPath "C:\Tools\apc-midi-deck\assets\apc-deck-ui.png"
 ```
+
+## 7. Knob Dispatch Priority Fix — Verified 2026-10-28
+
+### Problem and bounded change
+
+With MIDI Learn enabled, the old CC loop called `Select-ApcControl` before each knob's `Set-AudioVolumeByMapping`. Visible inspector work, especially rebuilding target dropdowns when action types change at K1/K2, delayed audio dispatch. Diagnostic timing attributed most of the sweep cost to inspector updates rather than knob painting. It did not establish why the historical handoff run was faster under its original conditions.
+
+`Open-ApcDeck.ps1` now records the selection candidate while processing the queued CC batch, applies all eligible knob volumes, then selects the final candidate once. This preserves MIDI Learn during edit-only mode and while pickup is waiting; pickup still gates volume writes. Continuing on an already-selected knob still skips inspector selection. The change does not alter profiles, audio targets, MIDI polling interval, endpoint caches, or volume conversion.
+
+### Verification and timing evidence
+
+Before the fix, ten fresh-process runs of the existing startup smoke test measured **212.95 ms median**, **194.59–525.50 ms range**, with **one of ten over the 500 ms gate**. This was 2.03 times the documented 105 ms observation, or 2.18 times the pasted 97.73 ms handoff result.
+
+The targeted comparison used the actual old dispatch block from `4d90375` and the patched block with the real inspector UI in a temporary diagnostic copy. Ten paired batches alternated before/after execution order. Each batch queued K1–K8 in a fixed order and started from `Pad_32`. The audio function was replaced with a recording sink; elapsed time began at dispatch-block entry. No audio levels were changed by this benchmark.
+
+| Metric | Before: median (range), ms | After: median (range), ms |
+| :--- | :--- | :--- |
+| Time to first volume-handler entry | 25.7635 (18.500–42.573) | 0.1455 (0.108–1.869) |
+| Time to eighth volume-handler entry | 88.8770 (70.685–121.343) | 0.4665 (0.373–2.578) |
+| Whole dispatch block, including inspector | 88.9125 (70.723–121.393) | 31.7190 (29.813–45.880) |
+
+The eight dispatch regression cases passed, and the ordering case correctly failed against the old implementation. PowerShell parsing and `git diff --check` passed. The full existing suite plus the new regression checks passed after the fix:
+
+```text
+PASS: Knob dispatch ordering, edit-only, pickup, and MIDI Learn (8 cases; no audio writes).
+PASS: ApcDeck verified (Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=22, BluetoothPaired=4, KnobSweepMs=165.65, UI=Visible)
+```
+
+### Limits and resume boundary
+
+- These timings establish reduced delay **before reaching the audio handler**, not USB/MIDI arrival-to-CoreAudio completion or audible response. Real audio writes, driver latency, and playback were not timed by the recording-sink benchmark.
+- Inspector work still runs synchronously after the batch and can delay processing of later-arriving events. The fix prioritizes volumes already queued; it does not make the entire UI asynchronous or guarantee sub-millisecond physical response.
+- The 165.65 ms startup sweep is one post-fix smoke result, not a controlled improvement in inspector rendering. That benchmark directly selects controls and does not exercise the reordered CC dispatch path. The before/after dispatch harness was temporary and in-memory; only the deterministic regression checks are retained in the repository.
+- Earlier read-only checks found cached endpoint-plus-volume-read medians of 0.118–0.143 ms (one 48 ms outlier), and 120 live window-response probes had no timeouts. Neither check proves volume-write or physical input latency.
+- The actual profile, `%LOCALAPPDATA%\GoodCube\ApcMidiDeck\profile.json`, retained SHA-256 `D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4` across the fix and restart. The patched app was verified visible and responding as PID `73768`; this is a dated observation, not a persistent process identity.
+- Leave APC-DECK running. Keep this change local until the user explicitly authorizes a push. Reuse these completed checks unless new code, a failure, or a changed condition warrants another run.

@@ -1774,6 +1774,7 @@ $midiTimer.Add_Tick({
             }
         }
 
+        $knobToSelect = $null
         foreach ($ccKey in $latestCc.Keys) {
             $ccEv = $latestCc[$ccKey]
             $cid = "Knob_$ccKey"
@@ -1783,8 +1784,8 @@ $midiTimer.Add_Tick({
             $script:KnobLastPhys[$cid] = $physPct
             $script:LastKnobTurnTick = [Environment]::TickCount64
 
-            if ($chkMidiLearn.Checked -and $script:ProfileMap.ContainsKey($cid) -and $form.Visible -and $script:SelectedId -ne $cid) {
-                Select-ApcControl $cid
+            if ($chkMidiLearn.Checked -and $script:ProfileMap.ContainsKey($cid) -and $form.Visible) {
+                $knobToSelect = $cid
             }
 
             if (-not $chkEditOnly.Checked -and $script:ProfileMap.ContainsKey($cid)) {
@@ -1809,6 +1810,12 @@ $midiTimer.Add_Tick({
                     Invalidate-ApcControl $cid
                 }
             }
+        }
+
+        # Apply every queued knob's volume before updating the inspector once.
+        # Keep selection outside the loop so pickup/edit-only still allow MIDI Learn.
+        if ($knobToSelect -and $script:SelectedId -ne $knobToSelect) {
+            Select-ApcControl $knobToSelect
         }
 
         if ($needFullRefresh) {
