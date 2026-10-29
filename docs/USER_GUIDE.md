@@ -92,12 +92,16 @@ The inspector shows the selected control, with **Follow hardware selection**, **
 - A white focus ring with a black outline marks the keyboard target. Cyan marks the selected mapping. MIDI Learn may change selection while you edit, but does not steal keyboard focus.
 - All 90 mappings expose accessible names and selection semantics; the piano provides 25 individual accessible keys while remaining one lightweight painted canvas. Knobs expose their observed level/status. Full Narrator and high-contrast qualification remains separate from the tested keyboard/accessibility-object behavior.
 
-## 4. Colors and Readable Knob Labels
+## 4. Colors and Readable Labels
 
 - LED-equipped pads, scene buttons, and track buttons expose **Active LED color** and **Standby LED color**. Piano keys and transport buttons expose their on-screen color; knobs have no color fields.
 - Color dropdowns and swatches both edit the draft. **Apply** commits the color and synchronizes hardware LEDs; **Revert** cancels the change. Blink colors remain available in the dropdowns.
 - Knob tiles put **K-number**, **percentage**, and **device label** on separate lines. Labels wrap between words and use ellipses when space is limited. Hover for the full saved label and target; select a knob to see its full mapping in the inspector.
 - The 5×8 matrix, scene/track rows, 2×4 knob bank, transport row, and 25-key layout retain their hardware positions.
+- Pads use neutral backgrounds and bright wrapped names. The thin colored strip still represents the physical LED color; status text separately reports Default, Ready, Live, Muted, Disabled, Offline, Missing, or Unknown from the current snapshot. Custom LED colors do not override that text.
+- Larger pads show status below the name. Compact pads reserve their space for the name; select or hover for full saved status, target, LED color, and row/column. The inspector labels status **Saved** because an unapplied draft does not change the active mapping.
+- Scene/track caps use neutral fills with colored rings. Colored piano keys and transport buttons automatically use black or white text for contrast. These screen treatments do not change physical LED outputs or saved colors.
+- Pad status follows the existing periodic refresh. Failed telemetry shows Unknown until recovery. Bluetooth status describes detected audio links, not general radio connectivity. Pad text also uses system window/text colors when Windows high contrast is active; full application theme qualification remains separate.
 
 ---
 

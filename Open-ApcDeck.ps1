@@ -207,6 +207,10 @@ $script:KnobStates              = @{}
 $script:LastStatusEvent         = ''
 . (Join-Path $PSScriptRoot 'KnobState.ps1')
 $script:PadVelocities           = @{}
+$script:PadPresentations        = @{}
+. (Join-Path $PSScriptRoot 'PadPresentation.ps1')
+$script:PadHighContrast = [Windows.Forms.SystemInformation]::HighContrast
+$script:PadPalette = New-PadPalette $script:PadHighContrast
 $script:SuppressInspectorEvents = $false
 $script:LastKnobTurnTick        = [int64]0
 $script:LastMidiOpenState       = $false
@@ -235,15 +239,23 @@ function Update-CachedTelemetrySummaries {
 
 function Update-PadVelocitiesCache {
     $changedPads = [Collections.Generic.List[string]]::new()
+    $themeChanged = $script:PadHighContrast -ne [Windows.Forms.SystemInformation]::HighContrast
+    if ($themeChanged) {
+        $script:PadHighContrast = [Windows.Forms.SystemInformation]::HighContrast
+        $script:PadPalette = New-PadPalette $script:PadHighContrast
+    }
     for ($note = 0; $note -lt 40; $note++) {
         $cid = "Pad_$note"
         $vel = if ($script:ProfileMap.ContainsKey($cid)) {
             Get-PadLedVelocity -Mapping $script:ProfileMap[$cid] -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
         } else { 0 }
-        if ((-not $script:PadVelocities.ContainsKey($cid)) -or $script:PadVelocities[$cid] -ne $vel) {
-            $script:PadVelocities[$cid] = $vel
+        $presentation = Get-PadPresentation $script:ProfileMap[$cid] $script:AudioSnapshot $script:BtSnapshot
+        $previous = $script:PadPresentations[$cid]
+        if ($themeChanged -or -not $previous -or $previous.Title -cne $presentation.Title -or $previous.Status -ne $presentation.Status -or $previous.State -ne $presentation.State -or $previous.Tone -ne $presentation.Tone -or $previous.Detail -cne $presentation.Detail -or (-not $script:PadVelocities.ContainsKey($cid)) -or $script:PadVelocities[$cid] -ne $vel) {
             $changedPads.Add($cid)
         }
+        $script:PadVelocities[$cid] = $vel
+        $script:PadPresentations[$cid] = $presentation
     }
     return $changedPads.ToArray()
 }
@@ -306,6 +318,13 @@ $script:FHeaderModel = [Drawing.Font]::new('Segoe UI', 14.0, [Drawing.FontStyle]
 $script:FHeaderPill  = [Drawing.Font]::new('Segoe UI Semibold', 8.0, [Drawing.FontStyle]::Bold)
 $script:FPadTiny     = [Drawing.Font]::new('Segoe UI', 6.8, [Drawing.FontStyle]::Bold)
 $script:FPadMain     = [Drawing.Font]::new('Segoe UI Semibold', 8.2, [Drawing.FontStyle]::Bold)
+$script:SfPadLabel = [Drawing.StringFormat]::new()
+$script:SfPadLabel.Alignment = [Drawing.StringAlignment]::Center
+$script:SfPadLabel.LineAlignment = [Drawing.StringAlignment]::Center
+$script:SfPadLabel.Trimming = [Drawing.StringTrimming]::EllipsisWord
+$script:SfPadLabel.FormatFlags = [Drawing.StringFormatFlags]::LineLimit
+$script:FPadLabel = [Drawing.Font]::new('Segoe UI Semibold', 9.0, [Drawing.FontStyle]::Bold)
+$script:FPadStatus = [Drawing.Font]::new('Segoe UI', 7.5, [Drawing.FontStyle]::Regular)
 $script:FPadTarget   = [Drawing.Font]::new('Segoe UI', 6.8, [Drawing.FontStyle]::Regular)
 $script:FRoundCap    = [Drawing.Font]::new('Segoe UI Semibold', 7.3, [Drawing.FontStyle]::Bold)
 $script:FRoundBadge  = [Drawing.Font]::new('Segoe UI', 6.5, [Drawing.FontStyle]::Bold)
@@ -502,15 +521,9 @@ $padPaintHandler = {
         $sel = ($cid -eq $script:SelectedId)
         $vel = if ($script:PadVelocities.ContainsKey($cid)) { [int]$script:PadVelocities[$cid] } else { 0 }
 
-        $fillCol = switch ($vel) {
-            1 { $cGreenFill }
-            2 { $cGreenBlink }
-            3 { $cRedFill }
-            4 { $cRedBlink }
-            5 { $cAmberFill }
-            6 { $cAmberBlink }
-            default { $cPadUnmapped }
-        }
+        $palette = $script:PadPalette
+        $presentation = $script:PadPresentations[$cid]
+        $fillCol = if ($sel) { $palette.SelectedBackground } else { $palette.Background }
         $ledGlow = switch ($vel) {
             1 { $cGreenGlow }
             2 { $cGreenGlow }
@@ -532,38 +545,19 @@ $padPaintHandler = {
         $glowBrush = [Drawing.SolidBrush]::new($ledGlow)
         $g.FillRectangle($glowBrush, 4, 3, $w - 8, 3)
 
-        # Border (bright cyan when selected, subtle bezel otherwise)
-        $borderPen = if ($sel) {
-            [Drawing.Pen]::new($cCyanSelect, 2.5)
-        } else {
-            [Drawing.Pen]::new([Drawing.Color]::FromArgb(60, 72, 90), 1.0)
-        }
+        $borderPen = [Drawing.Pen]::new($(if ($sel) { $palette.SelectedBorder } else { $palette.Border }), $(if ($sel) { 2.5 } else { 1.0 }))
         $g.DrawRectangle($borderPen, 2, 2, $w - 5, $h - 5)
 
-        # Pad coordinate badge (top-left) + MIDI note (top-right)
-        $noteNum = [int]($cid -replace '^Pad_','')
-        $rowNum  = 5 - [int][Math]::Floor($noteNum / 8)
-        $colNum  = ($noteNum % 8) + 1
-        $dimBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(203, 213, 225))
+        # Short tiles spend their limited height on the name; full state remains in the inspector/tooltip.
+        $showStatus = $h -ge 62
+        $labelHeight = if ($showStatus) { $h - 28 } else { $h - 13 }
+        $font = if ($w -ge 72) { $script:FPadLabel } else { $script:FPadMain }
+        $labelBrush = [Drawing.SolidBrush]::new($palette.Primary)
+        $statusBrush = [Drawing.SolidBrush]::new($palette[$presentation.Tone])
+        $g.DrawString($presentation.Title, $font, $labelBrush, [Drawing.RectangleF]::new(5, 8, $w - 10, [Math]::Max(14, $labelHeight)), $script:SfPadLabel)
+        if ($showStatus) { $g.DrawString($presentation.Status, $script:FPadStatus, $statusBrush, [Drawing.RectangleF]::new(4, $h - 19, $w - 8, 15), $script:SfCenter) }
 
-        $g.DrawString("R${rowNum}·C${colNum}", $script:FPadTiny, $dimBrush, 5, 7)
-
-        $lblText = if ($m -and ($m.ActionType -ne 'None' -or $vel -gt 0)) {
-            Format-CompactText $m.Label 14
-        } else {
-            'UNASSIGNED'
-        }
-        $subText = if ($m -and $m.ActionType -ne 'None') {
-            Format-CompactText $(if ($m.Target) { $m.Target } else { $m.ActionType }) 16
-        } else {
-            "Note $noteNum"
-        }
-
-        $lblBrush = if ($m -and ($m.ActionType -ne 'None' -or $vel -gt 0)) { [Drawing.Brushes]::White } else { $dimBrush }
-        $g.DrawString($lblText, $script:FPadMain,   $lblBrush, [Drawing.RectangleF]::new(3, 18, $w - 6, [Math]::Max(16, $h - 32)), $script:SfCenter)
-        $g.DrawString($subText, $script:FPadTarget, $dimBrush, [Drawing.RectangleF]::new(3, $h - 16, $w - 6, 13), $script:SfCenter)
-
-        $padBrush.Dispose(); $glowBrush.Dispose(); $borderPen.Dispose(); $dimBrush.Dispose()
+        $padBrush.Dispose(); $glowBrush.Dispose(); $borderPen.Dispose(); $labelBrush.Dispose(); $statusBrush.Dispose()
     } catch { }
 }
 
@@ -585,14 +579,8 @@ $roundBtnPaintHandler = {
         $g.Clear($cBezelBg)
 
         $active = ($m -and $m.ActionType -ne 'None')
-        $btnFill = if (-not $active -and (-not $m -or $m.LedColor -in @('Auto','Off'))) {
-            [Drawing.Color]::FromArgb(38, 43, 54)
-        } elseif ($isScene) {
-            Get-UiColorForColorName $m.LedColor $cGreenFill
-        } else {
-            Get-UiColorForColorName $m.LedColor $cRedFill
-        }
-
+        $btnFill = if ($sel) { $script:PadPalette.SelectedBackground } else { $script:PadPalette.Background }
+        $ringColor = if ($m) { Get-UiColorForColorName $m.LedColor $(if ($isScene) { $cGreenGlow } else { $cRedGlow }) } else { $script:PadPalette.Border }
         # Draw recessed pill/circle button cap in upper portion + authentic Akai silkscreen badge below
         $capH = [Math]::Max(22, $h - 19)
         $capW = [Math]::Min($w - 8, [Math]::Max(34, $capH + 18))
@@ -600,12 +588,13 @@ $roundBtnPaintHandler = {
         $capY = 2
 
         $capBrush = [Drawing.SolidBrush]::new($btnFill)
+        $capInk = [Drawing.SolidBrush]::new($script:PadPalette.Primary)
         $g.FillEllipse($capBrush, $capX, $capY, $capW, $capH)
 
         $ringPen = if ($sel) {
             [Drawing.Pen]::new($cCyanSelect, 2.5)
         } elseif ($active) {
-            [Drawing.Pen]::new($(if ($isScene) { $cGreenGlow } else { $cRedGlow }), 1.5)
+            [Drawing.Pen]::new($ringColor, 1.5)
         } else {
             [Drawing.Pen]::new([Drawing.Color]::FromArgb(80, 92, 112), 1.2)
         }
@@ -614,7 +603,7 @@ $roundBtnPaintHandler = {
         if ($isScene) {
             $meta = $script:SceneMeta[$code]
             $capTitle = if ($m -and $m.Label) { Format-CompactText $m.Label 10 } else { $meta.Arrow }
-            $g.DrawString($capTitle, $script:FRoundCap, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(2, $capY, $w - 4, $capH), $script:SfCenter)
+            $g.DrawString($capTitle, $script:FRoundCap, $capInk, [Drawing.RectangleF]::new(2, $capY, $w - 4, $capH), $script:SfCenter)
 
             # Red Akai Shift-function silkscreen badge beneath the round Scene button
             $badgeBg = if ($code -eq 81) { [Drawing.Color]::FromArgb(51, 65, 85) } else { $cAkaiRed }
@@ -626,7 +615,7 @@ $roundBtnPaintHandler = {
             $meta = $script:TrackMeta[$code]
             $customLbl = if ($m -and $m.Label -and $m.Label -ne $meta.Sub) { Format-CompactText $m.Label 9 } else { $meta.Sub }
             $capTitle = "$($meta.Top) $customLbl"
-            $g.DrawString($capTitle, $script:FRoundCap, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(2, $capY, $w - 4, $capH), $script:SfCenter)
+            $g.DrawString($capTitle, $script:FRoundCap, $capInk, [Drawing.RectangleF]::new(2, $capY, $w - 4, $capH), $script:SfCenter)
 
             $bBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(45, 55, 72))
             $g.FillRectangle($bBrush, 3, $h - 15, $w - 6, 13)
@@ -634,7 +623,7 @@ $roundBtnPaintHandler = {
             $bBrush.Dispose()
         }
 
-        $capBrush.Dispose(); $ringPen.Dispose()
+        $capBrush.Dispose(); $capInk.Dispose(); $ringPen.Dispose()
     } catch { }
 }
 
@@ -1053,12 +1042,13 @@ $keybedCanvas.Add_Paint({
             $g.DrawRectangle($borderPen, $rc.X, $rc.Y, $rc.Width - 1, $rc.Height - 1)
             $borderPen.Dispose()
 
-            $txtBrush = if ($hasColor -or $active) { [Drawing.Brushes]::White } else { [Drawing.Brushes]::DarkSlateGray }
+            $txtBrush = [Drawing.SolidBrush]::new((Get-ReadableInk $keyFill))
             if ($active -or ($m -and $m.Label -and $m.Label -ne $noteName -and $m.Label -ne "KEY $noteName")) {
                 $lblTxt = Format-CompactText $m.Label 9
                 $g.DrawString($lblTxt, $script:FKeyLblW, $txtBrush, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 38, $rc.Width - 2, 15), $script:SfBottom)
             }
             $g.DrawString($noteName, $script:FKeyNoteW, $txtBrush, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 22, $rc.Width - 2, 16), $script:SfBottom)
+            $txtBrush.Dispose()
         }
 
         # PASS 2: Render 10 Recessed Black Sharp/Flat Keys directly ON TOP of White Keys
@@ -1107,11 +1097,13 @@ $keybedCanvas.Add_Paint({
             $g.DrawRectangle($bPen, $rc.X, $rc.Y, $rc.Width - 1, $rc.Height - 1)
             $bPen.Dispose()
 
+            $blackInk = [Drawing.SolidBrush]::new((Get-ReadableInk $bFill))
             if ($active -or ($m -and $m.Label -and $m.Label -ne $noteName -and $m.Label -ne "KEY $noteName")) {
                 $lblTxt = Format-CompactText $m.Label 7
-                $g.DrawString($lblTxt, $script:FKeyLblB, [Drawing.Brushes]::Cyan, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 34, $rc.Width - 2, 13), $script:SfBottom)
+                $g.DrawString($lblTxt, $script:FKeyLblB, $blackInk, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 34, $rc.Width - 2, 13), $script:SfBottom)
             }
-            $g.DrawString($noteName, $script:FKeyNoteB, [Drawing.Brushes]::WhiteSmoke, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 20, $rc.Width - 2, 15), $script:SfBottom)
+            $g.DrawString($noteName, $script:FKeyNoteB, $blackInk, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 20, $rc.Width - 2, 15), $script:SfBottom)
+            $blackInk.Dispose()
         }
         $shadowBrush.Dispose()
     } catch { }
@@ -1302,7 +1294,7 @@ foreach ($sw in @(@{Name='Green';Bg=$cGreenFill}, @{Name='Amber';Bg=$cAmberFill}
     $sb.Margin = [Windows.Forms.Padding]::new(0, 0, 6, 0)
     $sb.FlatStyle = 'Flat'
     $sb.BackColor = $sw.Bg
-    $sb.ForeColor = [Drawing.Color]::White
+    $sb.ForeColor = Get-ReadableInk $sb.BackColor
     $sb.Add_Click({ $cmbLed.SelectedItem = [string]$this.Tag })
     $swatchPanel.Controls.Add($sb)
 }
@@ -1510,6 +1502,11 @@ function Update-ControlDescription([string]$cid) {
     $control = $script:ControlButtons[$cid]
     $control.AccessibleName = "$cid — $($m.Label)"
     $detail = "$($m.Label)`n$($m.Target)`n$cid · $($m.ActionType)"
+    if ($cid.StartsWith('Pad_') -and $script:PadPresentations.ContainsKey($cid)) {
+        $p = $script:PadPresentations[$cid]
+        $note = [int]$cid.Substring(4)
+        $detail += "`nState: $($p.State)`n$($p.Detail)`nLED: $(Get-PadLedDescription $script:PadVelocities[$cid]) · Row $(5 - [int][math]::Floor($note / 8)), column $($note % 8 + 1)"
+    }
     if ($cid.StartsWith('Knob_')) {
         $feedback = Get-KnobFeedback $cid $chkPickupMode.Checked $chkEditOnly.Checked
         $detail += "`n$feedback (CW = clockwise; CCW = counterclockwise)"
@@ -1519,6 +1516,9 @@ function Update-ControlDescription([string]$cid) {
     $control.AccessibleDescription = $detail + "`nArrows select; Tab changes group; F6 edits; Ctrl+T tests."
     $control.MappingValue = $detail
     $toolTips.SetToolTip($control, $detail)
+    if ($cid.StartsWith('Pad_') -and $cid -eq $script:SelectedId -and $script:PadPresentations.ContainsKey($cid)) {
+        $lblSelectedMeta.Text = "$cid · Saved: $($script:PadPresentations[$cid].State)"
+    }
 }
 
 function Invalidate-ApcControl([string]$cid) {
@@ -1528,14 +1528,14 @@ function Invalidate-ApcControl([string]$cid) {
         return
     }
     if ($script:ControlButtons.ContainsKey($cid)) {
-        if ($cid.StartsWith('Knob_')) { Update-ControlDescription $cid }
+        if ($cid.StartsWith('Knob_') -or $cid.StartsWith('Pad_')) { Update-ControlDescription $cid }
         $btn = $script:ControlButtons[$cid]
         if ($cid.StartsWith('Trans_')) {
             $m = if ($script:ProfileMap.ContainsKey($cid)) { $script:ProfileMap[$cid] } else { $null }
             $sel = ($cid -eq $script:SelectedId)
             $active = ($m -and $m.ActionType -ne 'None')
             $btn.BackColor = if ($active) { Get-UiColorForColorName $m.LedColor ([Drawing.Color]::FromArgb(30, 58, 95)) } else { $cPadUnmapped }
-            $btn.ForeColor = [Drawing.Color]::White
+            $btn.ForeColor = Get-ReadableInk $btn.BackColor
             $btn.Text = if ($m -and $m.Label) { Format-CompactText $m.Label 16 } else { $cid }
             $btn.FlatAppearance.BorderColor = if ($sel) { $cCyanSelect } else { [Drawing.Color]::FromArgb(71, 85, 105) }
             $btn.FlatAppearance.BorderSize  = if ($sel) { 2 } else { 1 }
@@ -2090,6 +2090,16 @@ $syncTimer.Add_Tick({
                 $state.Status = 'Unavailable'
                 $script:KnobPickedUp[$cid] = $false
                 Invalidate-ApcControl $cid
+            }
+        }
+        foreach ($padId in @($script:PadPresentations.Keys)) {
+            if ($script:ProfileMap[$padId].ActionType -in @('SetDefaultDevice','MuteToggle','EndpointEnableToggle','SwapDevices','BluetoothConnect')) {
+                $presentation = $script:PadPresentations[$padId]
+                $presentation.Status = 'Unknown'
+                $presentation.State = 'Telemetry unavailable'
+                $presentation.Detail = 'Audio refresh failed; waiting for the next successful refresh.'
+                $presentation.Tone = 'Warning'
+                Invalidate-ApcControl $padId
             }
         }
         Set-StatusBanner

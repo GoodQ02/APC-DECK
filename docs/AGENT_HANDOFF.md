@@ -1,5 +1,5 @@
 <!-- DOC_STATUS: AUTHORITATIVE -->
-<!-- HANDOFF_DATE: 2026-10-28 -->
+<!-- HANDOFF_DATE: 2026-10-29 -->
 
 # APC-DECK — Codex Agent Handoff & Current State Reference
 
@@ -11,6 +11,8 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 ---
 
 ## 1. Executive Summary & Live State
+
+**Contrast and pad readability pass (2026-10-29):** implemented locally on published keyboard commit `3bd2b56`, fully tested before restart, and verified visible/online as PID `73548`. Neutral pad fills, wrapped labels, independent status text, and readable custom-color text are active. Hardware geometry, physical LED engine, and MIDI dispatch remain intact. See Section 11. The user has authorized committing and pushing this tested pass to origin/main.
 
 **Keyboard and visible-focus pass (2026-10-29):** implemented locally on published `c1a6d80`, tested before restart, and verified online/responding as PID `81792`. All 90 mappings now have keyboard selection and accessible identities, including 25 virtual piano keys; the dispatch block remains unchanged. See Section 10. The user has authorized committing and pushing this tested pass to `origin/main`.
 
@@ -290,3 +292,29 @@ The user authorized keyboard navigation, visible focus, piano-key coverage, test
 ### Remaining scope
 
 Keyboard behavior and accessibility-object/provider coverage were verified; a full Narrator user journey, high-contrast theme qualification, and broader increased-text/DPI coverage were not performed. Next audit work is contrast and pad readability, separating operational status from customizable physical LED colors without changing hardware LED outputs. App-session volume readback remains a separate optional improvement.
+
+## 11. Contrast and Pad Readability — Implemented 2026-10-29
+
+The user authorized this implementation and a restart after testing, explicitly preserving hardware layout, physical LED outputs, and latency fixes. Base is published keyboard commit `3bd2b56`. After verification, the user explicitly authorized committing and pushing this pass to origin/main; implementation, tests, user guide, and this handoff belong to the same release.
+
+### Delivered behavior
+
+- `PadPresentation.ps1` derives screen labels and operational states from existing snapshots, separately from customizable LED colors. Neutral pad fills and bright wrapped names replace saturated fills and the arbitrary 14-character label cutoff. The thin LED strip retains the existing velocity/color mapping. Row/column, target, decoded LED color, and full status remain in tooltips and accessible values.
+- Larger pads show Default, Ready, Live, Muted, Disabled, Offline, Missing, or Unknown beneath the name. Compact pads reserve their height for the label; the selected inspector always shows full saved status. Unapplied drafts do not alter that status. Bluetooth feedback describes audio-link evidence only. Refresh failure marks audio-related pad telemetry unavailable until recovery.
+- State-only changes invalidate the affected pad even when custom active/standby LED colors are identical. Unchanged snapshots request no pad repaint. Presentation work runs on existing refreshes, not the MIDI CC dispatch path.
+- Scene/track caps use neutral fills with colored rings. Piano and transport colors are retained while their foreground automatically chooses black or white for readable contrast. Pad palettes use system window/text colors when Windows high contrast is active.
+- The core `ApcDeck.psm1` LED/audio engine is unchanged. The queued-knob dispatch block is identical to `3bd2b56` after newline normalization. Hardware dimensions/order, polling, endpoint caches, SurfaceTile controls, shutdown, and launcher behavior remain intact.
+
+### Verification before restart
+
+- Added `tests/PadCases.ps1` to the existing offline UI harness and required its success marker. Tests cover independent state/LED identity, identical custom colors across state changes, disabled/missing/disconnected/unknown states, partial swaps, telemetry failure/recovery, unchanged-snapshot repaint suppression, full saved labels, inspector/tooltips/accessibility, and zero fixture audio/action/profile writes.
+- Measured all pad text tones against normal and selected backgrounds: minimum **7.3:1**. Custom piano/transport foreground combinations meet at least 4.5:1. Rendered review covered **1680×970, 1366×768, 1200×740**, and a forced system-color palette. Evidence: `C:\Users\jdben\Documents\APC-DECK UI Audit 2026-10-29\contrast`.
+- PowerShell parsing and `git diff --check` passed. Full `Test-ApcDeck.ps1` passed, including ten dispatch cases, snapshot cache tests, inspector/draft tests, live-state/pickup tests, and keyboard/piano cases. Final receipt: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=19, BluetoothPaired=4, KnobSweepMs=122.9, UI=Visible**. Offline UI sweep: 86.14 ms. These are startup selection/redraw measurements, not physical MIDI-to-audio latency.
+
+### Restart and preservation
+
+- Verified PID 81792's command line and no pending drafts, stopped it normally, waited for exit, then launched the existing desktop shortcut through Explorer/default desktop after all tests passed.
+- Replacement PID **73548**, HWND **4198198**, is responding and visible with **MIDI IN / LED OUT ONLINE**. Restored prior geometry: 1665×962 at x=888/y=265. Live screen and accessibility readback show independent Default/Unmuted/Muted/audio-link states and LED identities; the app is left open with Pad_32 selected.
+- Profile SHA-256 remained **D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4** before and after restart. Physical LED code/settings were preserved and tested; no deliberate physical input/output timing experiment was performed.
+
+Remaining audit scope: broader DPI/increased-text usability and a full Narrator journey; complete OS high-contrast theme qualification (the system-color fixture is not that qualification); optional app-session volume readback. Compact labels can still ellipsize at the fixed hardware layout's minimum dimensions, with full text available in the inspector and tooltip.
