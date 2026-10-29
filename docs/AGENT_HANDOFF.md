@@ -12,7 +12,7 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 
 ## 1. Executive Summary & Live State
 
-**Latest verified change (2026-10-28):** queued knob volume updates now run before one coalesced inspector selection. This is a local-only change on `main`; publication is **not authorized**. See Section 7 for measured results and their limits. The earlier `~105 ms` sweep is a historical observation, not a guaranteed current baseline.
+**Latest verified change (2026-10-28):** queued knob volume updates now run before one coalesced inspector selection. Commit `7a56312` was pushed to GitHub with explicit user authorization; local and remote `main` were verified to match at `7a563125b640ccf6f850a7957afb95b6cf9b4839` after that push. See Section 7 for measured results and their limits. The earlier `~105 ms` sweep is a historical observation, not a guaranteed current baseline.
 
 - **Repository Root**: `C:\Tools\apc-midi-deck`
 - **GitHub Remote**: `https://github.com/GoodQ02/APC-DECK` (`origin/main`)
@@ -182,4 +182,4 @@ PASS: ApcDeck verified (Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=22, Blu
 - The 165.65 ms startup sweep is one post-fix smoke result, not a controlled improvement in inspector rendering. That benchmark directly selects controls and does not exercise the reordered CC dispatch path. The before/after dispatch harness was temporary and in-memory; only the deterministic regression checks are retained in the repository.
 - Earlier read-only checks found cached endpoint-plus-volume-read medians of 0.118–0.143 ms (one 48 ms outlier), and 120 live window-response probes had no timeouts. Neither check proves volume-write or physical input latency.
 - The actual profile, `%LOCALAPPDATA%\GoodCube\ApcMidiDeck\profile.json`, retained SHA-256 `D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4` across the fix and restart. The patched app was verified visible and responding as PID `73768`; this is a dated observation, not a persistent process identity.
-- Leave APC-DECK running. Keep this change local until the user explicitly authorizes a push. Reuse these completed checks unless new code, a failure, or a changed condition warrants another run.
+- Leave APC-DECK running. The fix in `7a56312` is published and synchronization was verified; the earlier local-only hold is superseded by the user's explicit push authorization. This documentation-only publication-status correction is also authorized for commit and push. Reuse the completed checks unless new code, a failure, or a changed condition warrants another run.
