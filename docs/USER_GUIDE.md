@@ -71,7 +71,7 @@ The left chassis renders all **90 mappable physical controls** of the Akai APC K
 
 ## 3. Inspector, Drafts, and Testing
 
-The inspector shows the selected control, with **Follow hardware selection**, **Edit mode — pause live actions**, and **Pickup — prevent volume jumps** at the top.
+The inspector keeps the selected control and saved status at the top. **Follow hardware selection**, **Edit mode — pause live actions**, and **Pickup — prevent volume jumps** begin the scrollable fields below it.
 
 - **Follow hardware selection (MIDI Learn)** selects the control you touch. Every control keeps its own unsaved draft when you select a different control, including selection from physical MIDI input.
 - Edit **Label**, **Action**, and the relevant target fields. The secondary device field appears only for a two-device swap. Knobs hide color fields; keys expose their screen color.
@@ -103,6 +103,13 @@ The inspector shows the selected control, with **Follow hardware selection**, **
 - Scene/track caps use neutral fills with colored rings. Colored piano keys and transport buttons automatically use black or white text for contrast. These screen treatments do not change physical LED outputs or saved colors.
 - Pad status follows the existing periodic refresh. Failed telemetry shows Unknown until recovery. Bluetooth status describes detected audio links, not general radio connectivity. Pad text also uses system window/text colors when Windows high contrast is active; full application theme qualification remains separate.
 
+### Larger text
+
+- APC-DECK follows Windows **Accessibility → Text size** on startup and when you return to the window. **More actions → Text size** provides a session-only 100–225% override; **Use Windows text size** restores the system preference. Neither option changes Windows settings or the mapping profile.
+- Inspector labels, fields, toggles, and actions grow with the requested size. Mode toggles and fields scroll; selected context and Apply/Revert/Test remain fixed. F6 jumps directly to the label field and scrolls it into view. Dropdown lists open wider to show longer device names.
+- Hardware positions stay fixed. Pad, knob, scene/track, and piano text enlarges only while useful words, percentages, and note identities fit the available cell. Names wrap at spaces rather than breaking into vertical fragments. Select or hover to read full details when a compact tile ellipsizes. Decorative dial artwork yields space to text.
+- Large-font layouts were tested through 225% at 1200×740 and 1680×970, with GDI+ font-metric checks at 96, 120, 144, and 192 DPI. This does not constitute a full mixed-DPI monitor or Windows display-scaling qualification; the existing desktop/DPI mode is preserved.
+
 ---
 
 ### Live volume and pickup feedback
@@ -132,5 +139,5 @@ APC-DECK includes dedicated signal conditioning and caching for the 8 hardware p
 - In the right-hand Inspector, choose **More actions… → Mute saved device (0%)** to immediately set the selected knob or audio device button to `0%` and mute it in Windows.
 
 ### Optional `Knob Soft-Takeover (Pickup mode — prevent jumps)`
-- Located at the top of the Inspector (`Knob Soft-Takeover (Pickup mode — prevent jumps)`).
+- Located at the start of the inspector's scrollable fields (**Pickup — prevent volume jumps**).
 - When enabled, if a physical knob's position does not match the current Windows volume (for example, right after boot or after changing volume in Windows), turning the knob will **not** cause a sudden volume jump—it waits until the physical knob crosses ("picks up") the current Windows volume level before locking on.

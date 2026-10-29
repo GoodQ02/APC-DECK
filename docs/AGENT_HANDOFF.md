@@ -12,6 +12,8 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 
 ## 1. Executive Summary & Live State
 
+**DPI and larger-text usability pass (2026-10-29):** implemented locally on published contrast commit `fe972d1`, tested before restart, and verified visible/online as PID `18328`. Inspector typography follows Windows text size with a session override, fields/toggles scroll, actions remain fixed, and hardware text adapts to available space using measured font metrics. Hardware geometry, physical LED engine, and MIDI dispatch remain intact. See Section 12. The user has authorized committing and pushing this tested pass to origin/main.
+
 **Contrast and pad readability pass (2026-10-29):** implemented locally on published keyboard commit `3bd2b56`, fully tested before restart, and verified visible/online as PID `73548`. Neutral pad fills, wrapped labels, independent status text, and readable custom-color text are active. Hardware geometry, physical LED engine, and MIDI dispatch remain intact. See Section 11. The user has authorized committing and pushing this tested pass to origin/main.
 
 **Keyboard and visible-focus pass (2026-10-29):** implemented locally on published `c1a6d80`, tested before restart, and verified online/responding as PID `81792`. All 90 mappings now have keyboard selection and accessible identities, including 25 virtual piano keys; the dispatch block remains unchanged. See Section 10. The user has authorized committing and pushing this tested pass to `origin/main`.
@@ -318,3 +320,30 @@ The user authorized this implementation and a restart after testing, explicitly 
 - Profile SHA-256 remained **D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4** before and after restart. Physical LED code/settings were preserved and tested; no deliberate physical input/output timing experiment was performed.
 
 Remaining audit scope: broader DPI/increased-text usability and a full Narrator journey; complete OS high-contrast theme qualification (the system-color fixture is not that qualification); optional app-session volume readback. Compact labels can still ellipsize at the fixed hardware layout's minimum dimensions, with full text available in the inspector and tooltip.
+
+## 12. DPI and Larger-Text Usability — Implemented 2026-10-29
+
+The user authorized implementation and restart after testing, preserving hardware layout, physical LED outputs, and latency fixes. Base: published contrast commit `fe972d1`. After verification, the user explicitly authorized committing and pushing this pass to origin/main; implementation, tests, user guide, and this handoff belong to the same release.
+
+### Delivered behavior
+
+- `TextLayout.ps1` reads Windows Accessibility `TextScaleFactor` on startup/activation, bounded to 100–225%. **More actions → Text size** offers session overrides and **Use Windows text size**. These actions do not change Windows preferences or mapping persistence.
+- Inspector fields, labels, toggles, menus, and persistent actions use the requested font size. Selected context remains above the scrollable area; the three mode toggles now begin that area. Wrapped text determines field/toggle heights. Apply/Revert/Test remain fixed; the full 50% volume warning stays on knob Test. Wide dropdown lists improve device-name readability.
+- Hardware geometry remains fixed. Preallocated font choices let pad/knob/scene/track/piano text enlarge only while meaningful words, percentages, and note identities still fit. Label wrapping keeps words intact, ellipsizing overlong words instead of fragmenting them vertically. Knob and piano text rows use actual GDI+ font heights; dial artwork yields to text. Full labels and state remain available in the inspector/tooltips/accessibility values.
+- Fonts are created only when text size changes, previous generated fonts are disposed, and wrapped surface strings use a bounded cache. Header row heights remain stable during hardware selection to avoid repeated inspector layout. No registry or endpoint query was added to the MIDI tick or painting.
+- `ApcDeck.psm1` is unchanged, and the queued-CC dispatch block matches `fe972d1` after newline normalization. Physical LED mappings/transmission, audio caches, polling, shutdown, AutoScaleMode=None, and desktop launcher/placement behavior are preserved. The implementation uses measured text layout while retaining the established [WinForms scaling mode](https://learn.microsoft.com/en-us/dotnet/desktop/winforms/automatic-scaling-in-windows-forms).
+
+### Verification before restart
+
+- Added `tests/TextLayoutCases.ps1` to the existing offline harness, with a required success marker. Tested **100%, 125%, 150%, 200%, and 225%** fonts at **1680×970 and 1200×740**. Checks cover fixed action bounds and text fit, scrollable fields, wrapped toggles, retained drafts, menu selection/reset, non-compounding font changes, and zero audio/action/profile writes.
+- Compared all 65 native hardware-control bounds and 25 piano-key rectangles across text sizes: identical for each window size. LED values remain identical. GDI+ bitmap contexts at **96/120/144/192 DPI** verified that full volume percentages and sharp-note identities fit proportional device-pixel cells. These are font-metric checks, not actual OS display-mode changes.
+- Rendered review caught excessive hardware-text enlargement at 225%; the final fitting policy preserves meaningful compact labels and piano note identities. Reviewed minimum/large layouts and the live 150% override. Captures: `C:\Users\jdben\Documents\APC-DECK UI Audit 2026-10-29\text-size`.
+- PowerShell parsing and `git diff --check` passed. Full `Test-ApcDeck.ps1` passed, including ten dispatch cases, snapshot cache tests, inspector/drafts, live state/pickup, keyboard/piano, contrast, and text sizing. Final receipt: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=19, BluetoothPaired=4, KnobSweepMs=167.57, UI=Visible**. Offline sweep: 124.32 ms. These are startup selection/redraw measurements, not physical MIDI-to-audio latency.
+
+### Restart and live verification
+
+- Verified PID 73548's identity and no pending drafts; stopped it normally, waited for exit, and launched the existing desktop shortcut through Explorer/default desktop only after the full suite passed.
+- Replacement PID **18328**, HWND **6621922**, is visible/responding with **MIDI IN / LED OUT ONLINE**. Restored prior geometry: 1665×962 at x=888/y=265. Safe native UI interaction selected **150%**, confirmed larger editor/action controls, then restored **Use Windows text size** (105%). No mapping action was executed.
+- Windows TextScaleFactor remains **105**, and profile SHA-256 remains **D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4**. The app is left open with Pad_32 selected and no pending drafts.
+
+Remaining qualification: actual mixed-DPI monitor transitions and Windows display-mode changes, sub-minimum work areas, a full Narrator journey, and full OS high-contrast behavior. Existing desktop/DPI awareness was deliberately preserved. Compact hardware labels can still ellipsize; the inspector honors the full requested text size while hardware text is bounded by available space. App-session volume readback remains optional separate work.

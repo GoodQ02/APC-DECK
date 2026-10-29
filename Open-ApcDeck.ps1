@@ -321,8 +321,8 @@ $script:FPadMain     = [Drawing.Font]::new('Segoe UI Semibold', 8.2, [Drawing.Fo
 $script:SfPadLabel = [Drawing.StringFormat]::new()
 $script:SfPadLabel.Alignment = [Drawing.StringAlignment]::Center
 $script:SfPadLabel.LineAlignment = [Drawing.StringAlignment]::Center
-$script:SfPadLabel.Trimming = [Drawing.StringTrimming]::EllipsisWord
-$script:SfPadLabel.FormatFlags = [Drawing.StringFormatFlags]::LineLimit
+$script:SfPadLabel.Trimming = [Drawing.StringTrimming]::EllipsisCharacter
+$script:SfPadLabel.FormatFlags = [Drawing.StringFormatFlags]'LineLimit, NoWrap'
 $script:FPadLabel = [Drawing.Font]::new('Segoe UI Semibold', 9.0, [Drawing.FontStyle]::Bold)
 $script:FPadStatus = [Drawing.Font]::new('Segoe UI', 7.5, [Drawing.FontStyle]::Regular)
 $script:FPadTarget   = [Drawing.Font]::new('Segoe UI', 6.8, [Drawing.FontStyle]::Regular)
@@ -469,6 +469,7 @@ $chassisLayout = [Windows.Forms.TableLayoutPanel]::new()
 $chassisLayout.Dock = 'Fill'
 $chassisLayout.Padding = [Windows.Forms.Padding]::new(8, 6, 6, 6)
 $chassisLayout.BackColor = $cChassisBg
+$chassisLayout.Font = $form.Font
 $chassisLayout.ColumnCount = 1
 $chassisLayout.RowCount = 2
 [void]$chassisLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 67))
@@ -548,14 +549,18 @@ $padPaintHandler = {
         $borderPen = [Drawing.Pen]::new($(if ($sel) { $palette.SelectedBorder } else { $palette.Border }), $(if ($sel) { 2.5 } else { 1.0 }))
         $g.DrawRectangle($borderPen, 2, 2, $w - 5, $h - 5)
 
-        # Short tiles spend their limited height on the name; full state remains in the inspector/tooltip.
-        $showStatus = $h -ge 62
-        $labelHeight = if ($showStatus) { $h - 28 } else { $h - 13 }
-        $font = if ($w -ge 72) { $script:FPadLabel } else { $script:FPadMain }
+        # Fit whole text lines using actual font/DPI metrics; never squeeze a status into the name.
+        $font = Get-SurfaceFont $g $(if ($w -ge 72) { 'FPadLabel' } else { 'FPadMain' }) ($w - 10) ([int](($h - 13) / 2)) 'MUTE'
+        $statusFont = Get-SurfaceFont $g 'FPadStatus' ($w - 8) ([int](($h - 14) / 4)) 'Default'
+        $lineHeight = [math]::Ceiling($font.GetHeight($g))
+        $statusHeight = [math]::Ceiling($statusFont.GetHeight($g)) + 2
+        $showStatus = $h -ge (14 + 2 * $lineHeight + $statusHeight)
+        $labelHeight = if ($showStatus) { $h - 14 - $statusHeight } else { $h - 13 }
+        $label = Get-SurfaceLines $g $presentation.Title $font ($w - 10) ([int][math]::Floor($labelHeight / $lineHeight))
         $labelBrush = [Drawing.SolidBrush]::new($palette.Primary)
         $statusBrush = [Drawing.SolidBrush]::new($palette[$presentation.Tone])
-        $g.DrawString($presentation.Title, $font, $labelBrush, [Drawing.RectangleF]::new(5, 8, $w - 10, [Math]::Max(14, $labelHeight)), $script:SfPadLabel)
-        if ($showStatus) { $g.DrawString($presentation.Status, $script:FPadStatus, $statusBrush, [Drawing.RectangleF]::new(4, $h - 19, $w - 8, 15), $script:SfCenter) }
+        $g.DrawString($label, $font, $labelBrush, [Drawing.RectangleF]::new(5, 8, $w - 10, [Math]::Max(14, $labelHeight)), $script:SfPadLabel)
+        if ($showStatus) { $g.DrawString($presentation.Status, $statusFont, $statusBrush, [Drawing.RectangleF]::new(4, $h - $statusHeight - 4, $w - 8, $statusHeight), $script:SfCenter) }
 
         $padBrush.Dispose(); $glowBrush.Dispose(); $borderPen.Dispose(); $labelBrush.Dispose(); $statusBrush.Dispose()
     } catch { }
@@ -600,10 +605,11 @@ $roundBtnPaintHandler = {
         }
         $g.DrawEllipse($ringPen, $capX, $capY, $capW, $capH)
 
+        $capFont = Get-SurfaceFont $g 'FRoundCap' ($w - 4) $capH 'SELECT'
         if ($isScene) {
             $meta = $script:SceneMeta[$code]
             $capTitle = if ($m -and $m.Label) { Format-CompactText $m.Label 10 } else { $meta.Arrow }
-            $g.DrawString($capTitle, $script:FRoundCap, $capInk, [Drawing.RectangleF]::new(2, $capY, $w - 4, $capH), $script:SfCenter)
+            $g.DrawString($capTitle, $capFont, $capInk, [Drawing.RectangleF]::new(2, $capY, $w - 4, $capH), $script:SfCenter)
 
             # Red Akai Shift-function silkscreen badge beneath the round Scene button
             $badgeBg = if ($code -eq 81) { [Drawing.Color]::FromArgb(51, 65, 85) } else { $cAkaiRed }
@@ -615,7 +621,7 @@ $roundBtnPaintHandler = {
             $meta = $script:TrackMeta[$code]
             $customLbl = if ($m -and $m.Label -and $m.Label -ne $meta.Sub) { Format-CompactText $m.Label 9 } else { $meta.Sub }
             $capTitle = "$($meta.Top) $customLbl"
-            $g.DrawString($capTitle, $script:FRoundCap, $capInk, [Drawing.RectangleF]::new(2, $capY, $w - 4, $capH), $script:SfCenter)
+            $g.DrawString($capTitle, $capFont, $capInk, [Drawing.RectangleF]::new(2, $capY, $w - 4, $capH), $script:SfCenter)
 
             $bBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(45, 55, 72))
             $g.FillRectangle($bBrush, 3, $h - 15, $w - 6, 13)
@@ -736,12 +742,25 @@ $knobPaintHandler = {
         $g.DrawRectangle($borderPen, 2, 2, $w - 5, $h - 5)
 
         $arcColor = if (-not $known) { [Drawing.Color]::FromArgb(148, 163, 184) } elseif ($state.Muted -or $pct -eq 0) { $cRedGlow } elseif ($pct -ge 95) { $cGreenGlow } else { $cCyanSelect }
-        # Compact tiles prioritize readable values and feedback over the dial artwork.
-        if ($h -ge 145) {
+        $topFont = Get-SurfaceFont $g 'FKnobTop' ($w - 6) ([int]($h / 7)) 'K1 muted'
+        $valueFont = Get-SurfaceFont $g 'FKnobValue' ($w - 6) ([int]($h / 5)) '100%'
+        $feedbackFont = Get-SurfaceFont $g 'FKnobFeedback' ($w - 6) ([int]($h / 6)) 'Waiting'
+        $nameFont = Get-SurfaceFont $g 'FKnobName' ($w - 8) ([int]($h / 6)) 'MASTER'
+        # Font metrics reserve non-overlapping value/feedback/name rows before optional dial artwork.
+        $topHeight = [math]::Ceiling($topFont.GetHeight($g)) + 2
+        $valueHeight = [math]::Ceiling($valueFont.GetHeight($g)) + 4
+        $feedbackHeight = [math]::Ceiling($feedbackFont.GetHeight($g)) + 3
+        $nameLineHeight = [math]::Ceiling($nameFont.GetHeight($g)) + 2
+        $nameLines = if ($h -ge $topHeight + $valueHeight + $feedbackHeight + 2 * $nameLineHeight + 10) { 2 } else { 1 }
+        $nameHeight = $nameLineHeight * $nameLines
+        $valueY = [math]::Max($topHeight + 4, $h - $valueHeight - $feedbackHeight - $nameHeight - 5)
+        $feedbackY = $valueY + $valueHeight
+        $nameY = $feedbackY + $feedbackHeight
+        if ($valueY - $topHeight -gt 48) {
             # Dial geometry — generously proportioned to fill the 2x4 knob cell
-            $dialDiam = [Math]::Max(18, [Math]::Min($w - 20, $h - 112))
+            $dialDiam = [Math]::Max(18, [Math]::Min($w - 20, $valueY - $topHeight - 12))
             $dialX    = [int](($w - $dialDiam) / 2)
-            $dialY    = 20
+            $dialY    = $topHeight + 5
             $cx       = $dialX + ($dialDiam / 2.0)
             $cy       = $dialY + ($dialDiam / 2.0)
 
@@ -794,18 +813,12 @@ $knobPaintHandler = {
         }
         $pctText = if (-not $known) { '—' } else { "$pct%" }
         $pctBrush = [Drawing.SolidBrush]::new($arcColor)
-        $g.DrawString("K$kIdx$(if ($known -and $state.Muted -and -not $state.Pending) { ' muted' })", $script:FKnobTop, [Drawing.Brushes]::Silver, [Drawing.RectangleF]::new(3, 3, $w - 6, 17), $script:SfCenter)
-        $g.DrawString($pctText, $script:FKnobValue, $pctBrush, [Drawing.RectangleF]::new(3, $h - 85, $w - 6, 23), $script:SfCenter)
-        $g.DrawString($feedback, $script:FKnobFeedback, [Drawing.Brushes]::LightSteelBlue, [Drawing.RectangleF]::new(3, $h - 62, $w - 6, 18), $script:SfCenter)
+        $g.DrawString("K$kIdx$(if ($known -and $state.Muted -and -not $state.Pending) { ' muted' })", $topFont, [Drawing.Brushes]::Silver, [Drawing.RectangleF]::new(3, 3, $w - 6, $topHeight), $script:SfCenter)
+        $g.DrawString($pctText, $valueFont, $pctBrush, [Drawing.RectangleF]::new(3, $valueY, $w - 6, $valueHeight), $script:SfCenter)
+        $g.DrawString($feedback, $feedbackFont, [Drawing.Brushes]::LightSteelBlue, [Drawing.RectangleF]::new(3, $feedbackY, $w - 6, $feedbackHeight), $script:SfCenter)
         $cleanLbl = if ($m -and $m.Label) { $m.Label -replace '^K\d+:\s*','' } else { "Knob $kIdx" }
-        # Wrap between words only; never fragment a device name into individual letters.
-        $splitAt = $cleanLbl.LastIndexOf(' ')
-        if ($splitAt -gt 0 -and $g.MeasureString($cleanLbl, $script:FKnobName).Width -gt ($w - 8)) {
-            $g.DrawString($cleanLbl.Substring(0, $splitAt), $script:FKnobName, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(4, $h - 43, $w - 8, 20), $script:SfCenter)
-            $g.DrawString($cleanLbl.Substring($splitAt + 1), $script:FKnobName, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(4, $h - 23, $w - 8, 20), $script:SfCenter)
-        } else {
-            $g.DrawString($cleanLbl, $script:FKnobName, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(4, $h - 43, $w - 8, 40), $script:SfCenter)
-        }
+        $label = Get-SurfaceLines $g $cleanLbl $nameFont ($w - 8) $nameLines
+        $g.DrawString($label, $nameFont, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(4, $nameY, $w - 8, [math]::Max(1,$h - $nameY - 3)), $script:SfPadLabel)
 
         $cardBrush.Dispose(); $borderPen.Dispose(); $pctBrush.Dispose()
     } catch { }
@@ -1042,12 +1055,17 @@ $keybedCanvas.Add_Paint({
             $g.DrawRectangle($borderPen, $rc.X, $rc.Y, $rc.Width - 1, $rc.Height - 1)
             $borderPen.Dispose()
 
+            $noteFontW = Get-SurfaceFont $g 'FKeyNoteW' ($rc.Width - 2) ([int]($rc.Height / 6)) $noteName
+            $labelFontW = Get-SurfaceFont $g 'FKeyLblW' ($rc.Width - 2) ([int]($rc.Height / 6)) 'KEY'
             $txtBrush = [Drawing.SolidBrush]::new((Get-ReadableInk $keyFill))
             if ($active -or ($m -and $m.Label -and $m.Label -ne $noteName -and $m.Label -ne "KEY $noteName")) {
                 $lblTxt = Format-CompactText $m.Label 9
-                $g.DrawString($lblTxt, $script:FKeyLblW, $txtBrush, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 38, $rc.Width - 2, 15), $script:SfBottom)
+                $labelH = [math]::Ceiling($labelFontW.GetHeight($g)) + 2
+                $noteH = [math]::Ceiling($noteFontW.GetHeight($g)) + 2
+                $g.DrawString($lblTxt, $labelFontW, $txtBrush, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - $noteH - $labelH - 6, $rc.Width - 2, $labelH), $script:SfBottom)
             }
-            $g.DrawString($noteName, $script:FKeyNoteW, $txtBrush, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 22, $rc.Width - 2, 16), $script:SfBottom)
+            $noteH = [math]::Ceiling($noteFontW.GetHeight($g)) + 2
+            $g.DrawString($noteName, $noteFontW, $txtBrush, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - $noteH - 6, $rc.Width - 2, $noteH), $script:SfBottom)
             $txtBrush.Dispose()
         }
 
@@ -1097,12 +1115,17 @@ $keybedCanvas.Add_Paint({
             $g.DrawRectangle($bPen, $rc.X, $rc.Y, $rc.Width - 1, $rc.Height - 1)
             $bPen.Dispose()
 
+            $noteFontB = Get-SurfaceFont $g 'FKeyNoteB' ($rc.Width - 2) ([int]($rc.Height / 5)) $noteName
+            $labelFontB = Get-SurfaceFont $g 'FKeyLblB' ($rc.Width - 2) ([int]($rc.Height / 5)) 'KEY'
             $blackInk = [Drawing.SolidBrush]::new((Get-ReadableInk $bFill))
             if ($active -or ($m -and $m.Label -and $m.Label -ne $noteName -and $m.Label -ne "KEY $noteName")) {
                 $lblTxt = Format-CompactText $m.Label 7
-                $g.DrawString($lblTxt, $script:FKeyLblB, $blackInk, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 34, $rc.Width - 2, 13), $script:SfBottom)
+                $labelH = [math]::Ceiling($labelFontB.GetHeight($g)) + 2
+                $noteH = [math]::Ceiling($noteFontB.GetHeight($g)) + 2
+                $g.DrawString($lblTxt, $labelFontB, $blackInk, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - $noteH - $labelH - 5, $rc.Width - 2, $labelH), $script:SfBottom)
             }
-            $g.DrawString($noteName, $script:FKeyNoteB, $blackInk, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - 20, $rc.Width - 2, 15), $script:SfBottom)
+            $noteH = [math]::Ceiling($noteFontB.GetHeight($g)) + 2
+            $g.DrawString($noteName, $noteFontB, $blackInk, [Drawing.RectangleF]::new($rc.X + 1, $rc.Bottom - $noteH - 5, $rc.Width - 2, $noteH), $script:SfBottom)
             $blackInk.Dispose()
         }
         $shadowBrush.Dispose()
@@ -1219,7 +1242,7 @@ function New-InspectorToggle([string]$text, [bool]$checked, [string]$hint) {
     $c.Margin = [Windows.Forms.Padding]::new(0)
     $c.ForeColor = [Drawing.Color]::Gainsboro
     $toolTips.SetToolTip($c, $hint)
-    $inspHeader.Controls.Add($c)
+    $inspFlow.Controls.Add($c)
     return $c
 }
 $chkMidiLearn = New-InspectorToggle 'Follow hardware selection' $true 'MIDI Learn: touching a physical control selects it. Drafts are kept when selection changes.'
@@ -1337,13 +1360,11 @@ $btnReset = $utilityMenu.Items.Add('Reset entire profile…')
 $btnMore.Add_Click({ $utilityMenu.Show($btnMore, [Drawing.Point]::new(0, $btnMore.Height)) })
 
 function Resize-InspectorContent {
-    # Reserve scrollbar space before it appears so vertical scrolling never causes horizontal scrolling.
-    $width = [Math]::Max(100, $inspFlow.ClientSize.Width - [Windows.Forms.SystemInformation]::VerticalScrollBarWidth - 6)
-    foreach ($ctrl in $inspFlow.Controls) { $ctrl.Width = $width }
-    foreach ($ctrl in $inspHeader.Controls) { $ctrl.Width = [Math]::Max(100, $inspHeader.ClientSize.Width - 4) }
+    if (Get-Command Resize-ReadableInspector -ErrorAction SilentlyContinue) { Resize-ReadableInspector }
 }
 $inspFlow.Add_Resize({ Resize-InspectorContent })
 $inspHeader.Add_Resize({ Resize-InspectorContent })
+. (Join-Path $PSScriptRoot 'TextLayout.ps1')
 
 # Bottom Status & Live MIDI Telemetry Bar
 $statusBox = [Windows.Forms.TextBox]::new()
@@ -1586,7 +1607,7 @@ function Update-InspectorDraftState {
     $btnRevert.Enabled = $dirty
     $btnTest.Enabled = -not $errorText -and $mapping.ActionType -ne 'None'
     $kind = if ($dirty) { 'draft' } else { 'saved' }
-    $btnTest.Text = if ($mapping.ControlKind -eq 'Knob') { "Test $kind at 50% volume" } else { "Test $kind action  (Ctrl+T)" }
+    $btnTest.Text = if ($mapping.ControlKind -eq 'Knob') { "Test $kind at 50% volume" } elseif ($script:TextScale -ge 1.5) { "Test $kind action" } else { "Test $kind action  (Ctrl+T)" }
     $toolTips.SetToolTip($btnTest, 'Runs the displayed mapping without saving it. This deliberate test can affect live audio or run a shortcut, even in Edit mode.')
     $lblDraftState.Text = if ($dirty) { "Unsaved draft · $($script:Drafts.Count) retained" } elseif ($script:Drafts.Count) { "Saved · $($script:Drafts.Count) other drafts retained" } else { 'Saved · no pending changes' }
     $lblDraftState.ForeColor = if ($dirty) { $cAmberGlow } else { $cGreenGlow }
@@ -2119,6 +2140,7 @@ $form.Add_Load({
     Update-PianoKeybedGeometry
     foreach ($cid in @($script:ProfileMap.Keys)) { Update-ControlDescription $cid }
     foreach ($cid in @('Trans_91','Trans_93','Trans_98')) { Invalidate-ApcControl $cid }
+    Set-ReadableTextScale (Get-WindowsTextScale)
     Resize-InspectorContent
     Select-ApcControl 'Pad_32'
     Set-StatusBanner 'Ready. Turn any knob (K1–K8), press any pad, button, or piano key on your Akai APC Key 25.'
