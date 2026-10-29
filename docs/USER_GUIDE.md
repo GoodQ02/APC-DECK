@@ -37,8 +37,8 @@ apc-deck -Mode Stop
 - **Double-click** the `APC-DECK` tray icon (or right-click -> **Open APC-DECK Window**) to restore the window.
 - Right-click the tray icon -> **Quit APC-DECK** (or run `apc-deck -Mode Stop`) to exit completely and turn off all APC Key 25 LEDs.
 - **Built-in Keyboard Shortcuts inside APC-DECK**:
-  - `Ctrl+S` — **Apply & Save Mapping**
-  - `Ctrl+T` — **Test Selected Action Now**
+  - `Ctrl+S` — **Apply the selected draft**
+  - `Ctrl+T` — **Test the displayed draft without saving**
   - `F5` — **Refresh Devices & Sync LEDs**
   - `Right-Click` on any pad, button, knob, or piano key — **Select & Test Action Immediately**
 
@@ -69,36 +69,26 @@ The left chassis renders all **90 mappable physical controls** of the Akai APC K
 
 ---
 
-## 3. MIDI Learn, Edit-Only Mode & Live Target Validation
+## 3. Inspector, Drafts, and Testing
 
-Located at the top of the right-hand **Stream Deck Inspector**:
-- **`Auto-Select on Physical Touch (MIDI Learn)` (Checked by default)**:
-  - Pressing any physical pad, scene/track button, transport button, or piano key—or turning any knob—on the APC Key 25 automatically highlights that control in cyan (`< 13 ms`) and loads its settings into the Inspector while executing its bound action.
-- **`Edit-Only Mode (Mute actions while mapping)`**:
-  - Check this box when you want to press physical buttons or turn knobs on the keyboard strictly to select and configure them **without** firing hotkeys, switching audio devices, or changing volumes.
-- **Live Target Validation Indicator**:
-  - Below `Primary Target`, APC-DECK validates your input in real time (`0.01 ms` in-memory lookup) and displays `✓ Matched: <Device Name>` for audio endpoints or `✓ Valid hotkey chord` for keyboard shortcuts.
+The inspector shows the selected control, with **Follow hardware selection**, **Edit mode — pause live actions**, and **Pickup — prevent volume jumps** at the top.
 
----
+- **Follow hardware selection (MIDI Learn)** selects the control you touch. Every control keeps its own unsaved draft when you select a different control, including selection from physical MIDI input.
+- Edit **Label**, **Action**, and the relevant target fields. The secondary device field appears only for a two-device swap. Knobs hide color fields; keys expose their screen color.
+- **Apply (Ctrl+S)** saves only the selected draft and updates its hardware mapping. Other drafts remain intact. Label/color edits do not force endpoint rediscovery.
+- **Revert** discards only the selected draft and restores its saved mapping.
+- **Test draft action (Ctrl+T)** runs the displayed draft without saving. With no pending edits, it tests the saved mapping. A knob test explicitly sets its displayed target to **50% volume**. Testing is a deliberate live action and remains available in Edit mode.
+- Draft status and **Apply / Revert / Test** stay visible in a fixed footer, even when fields scroll. Invalid required fields or unsupported knob actions disable Apply/Test; temporarily unavailable device mappings may still be saved for later use.
+- Drafts are held in this running app session, not written to a separate draft file. Apply before quitting or restarting if you want to retain them across process exits.
+- **Edit mode** pauses physical MIDI actions and on-screen knob-wheel volume changes. It does not disable explicit Test or the **Mute saved device (0%)** command.
+- **More actions…** contains Mute saved device, Clear mapping in draft, Refresh devices & LEDs (F5), Keep running in tray, and Reset entire profile. Clear is reversible until Apply. Reset still asks for confirmation and discards all drafts.
 
-## 4. Customizing Pad LEDs & Piano Key Colors
+## 4. Colors and Readable Knob Labels
 
-Select any control on the canvas (or touch it on the hardware) to customize its colors in the right-hand Inspector:
-
-### Hardware Pad LED Colors (`Pad_0`–`Pad_39`, `Scene_82`–`Scene_86`, `Track_64`–`Track_71`)
-- **`Active / ON Hardware LED & Key Color` (`LedColor`)**:
-  - The color sent to the APC Key 25 pad when the control is active (or as its steady color for hotkeys/macros).
-  - Supported values: `Auto`, `Green`, `BlinkGreen`, `Amber`, `BlinkAmber`, `Red`, `BlinkRed`, `Off`.
-- **`Standby / Muted / OFF Pad LED Color` (`OffLedColor`)**:
-  - The color shown on the pad when its assigned audio device is **not** currently the default device (or when a Bluetooth device is disconnected).
-  - Set to `Amber` to keep all mapped pads illuminated in standby, or `Off` if you only want the currently active device lit.
-- **`1-Click Instant Hardware Pad / Key Color Swatches`**:
-  - Click **`Green`**, **`Amber`**, **`Red`**, **`Blink G`**, **`Blink A`**, **`Blink R`**, or **`Off`** in the swatch bar to immediately apply, save, and transmit that color to the physical APC Key 25 pad.
-- **`Refresh Devices & Sync LEDs (F5)` Button**:
-  - Re-scans all Windows audio/Bluetooth endpoints and force-synchronizes all 54 hardware LED states to the APC Key 25.
-
-### Piano Key & Transport Button Visual Colors (`Key_48`–`Key_72`, `Trans_91`–`Trans_98`)
-- While the physical 25-note keyboard and transport buttons do not contain hardware LEDs, selecting any piano key or transport button and clicking a **1-Click Color Swatch** customizes its **on-screen key color** so you can visually color-code octave zones and macro groups.
+- LED-equipped pads, scene buttons, and track buttons expose **Active LED color** and **Standby LED color**. Piano keys and transport buttons expose their on-screen color; knobs have no color fields.
+- Color dropdowns and swatches both edit the draft. **Apply** commits the color and synchronizes hardware LEDs; **Revert** cancels the change. Blink colors remain available in the dropdowns.
+- Knob tiles put **K-number**, **percentage**, and **device label** on separate lines. Labels wrap between words and use ellipses when space is limited. Hover for the full saved label and target; select a knob to see its full mapping in the inspector.
+- The 5×8 matrix, scene/track rows, 2×4 knob bank, transport row, and 25-key layout retain their hardware positions.
 
 ---
 
@@ -117,7 +107,7 @@ APC-DECK includes dedicated signal conditioning and caching for the 8 hardware p
 - Knob events are drained at **60 Hz (16 ms)** using a 4-tier CoreAudio `MMDevice` cache and targeted single-control GDI+ invalidation (`Invalidate-ApcControl`), updating Windows volume and redrawing the rotary dial in **`0.15 ms – 1.0 ms`** without touching the other 89 controls.
 
 ### 1-Click `Zero-Out Selected Knob / Device (0% Mute)` Button
-- In the right-hand Inspector, click **`Zero-Out Selected Knob / Device (0% Mute)`** to immediately set the selected knob or audio device button to `0%` and mute it in Windows.
+- In the right-hand Inspector, choose **More actions… → Mute saved device (0%)** to immediately set the selected knob or audio device button to `0%` and mute it in Windows.
 
 ### Optional `Knob Soft-Takeover (Pickup mode — prevent jumps)`
 - Located at the top of the Inspector (`Knob Soft-Takeover (Pickup mode — prevent jumps)`).

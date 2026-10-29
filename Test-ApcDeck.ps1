@@ -91,6 +91,10 @@ if ((Get-PadLedVelocity -Mapping $customStandby -AudioSnapshot $fakeAudio -BtSna
 & pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Test-ApcKnobDispatch.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Knob dispatch regression test failed.' }
 
+# Exercise real inspector controls in an isolated process with recording sinks.
+& pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Test-ApcInspector.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Inspector regression test failed.' }
+
 # 4. Verify live snapshot mode
 $snapJson = & pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Open-ApcDeck.ps1') -Mode Snapshot
 $snap = $snapJson | ConvertFrom-Json

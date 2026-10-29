@@ -12,7 +12,9 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 
 ## 1. Executive Summary & Live State
 
-**Latest verified change (2026-10-28):** queued knob volume updates now run before one coalesced inspector selection. Commit `7a56312` was pushed to GitHub with explicit user authorization; local and remote `main` were verified to match at `7a563125b640ccf6f850a7957afb95b6cf9b4839` after that push. See Section 7 for measured results and their limits. The earlier `~105 ms` sweep is a historical observation, not a guaranteed current baseline.
+**Inspector first pass (2026-10-28):** the redesigned inspector, per-control session drafts, fixed Apply/Revert/Test footer, contextual fields, and readable knob labels are implemented and tested. The app was restarted only after checks passed and verified online as PID `85456`. The underlying knob-dispatch block is unchanged. See Section 8 for current behavior, evidence, and remaining scope. The user authorized committing and pushing this tested first pass to `main`; `caddf01` is the pre-first-pass baseline.
+
+**Previously verified dispatch change (2026-10-28):** queued knob volume updates now run before one coalesced inspector selection. Commit `7a56312` was pushed to GitHub with explicit user authorization; local and remote `main` were verified to match at `7a563125b640ccf6f850a7957afb95b6cf9b4839` after that push. See Section 7 for measured results and their limits. The earlier `~105 ms` sweep is a historical observation, not a guaranteed current baseline.
 
 - **Repository Root**: `C:\Tools\apc-midi-deck`
 - **GitHub Remote**: `https://github.com/GoodQ02/APC-DECK` (`origin/main`)
@@ -183,3 +185,43 @@ PASS: ApcDeck verified (Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=22, Blu
 - Earlier read-only checks found cached endpoint-plus-volume-read medians of 0.118–0.143 ms (one 48 ms outlier), and 120 live window-response probes had no timeouts. Neither check proves volume-write or physical input latency.
 - The actual profile, `%LOCALAPPDATA%\GoodCube\ApcMidiDeck\profile.json`, retained SHA-256 `D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4` across the fix and restart. The patched app was verified visible and responding as PID `73768`; this is a dated observation, not a persistent process identity.
 - Leave APC-DECK running. The fix in `7a56312` is published and synchronization was verified; the earlier local-only hold is superseded by the user's explicit push authorization. This documentation-only publication-status correction is also authorized for commit and push. Reuse the completed checks unless new code, a failure, or a changed condition warrants another run.
+
+## 8. Inspector First Pass — Implemented and Verified 2026-10-28
+
+The user authorized the first Impeccable implementation pass and a restart after testing. Scope: inspector workflow, retained drafts, persistent Apply/Revert/Test, and readable knob labels, preserving the hardware layout and completed latency fixes.
+
+### Delivered behavior
+
+- The inspector has a stable header, scrollable contextual fields, and a fixed action footer. Maintenance commands moved into **More actions…**. Action display names are friendly; stored enum values are unchanged.
+- Each control retains its own unsaved draft across mouse or MIDI Learn selection. **Apply** saves only that control; **Revert** restores only that control. Drafts are session-local and do not survive quitting/restarting. They never modify the runtime mappings until Apply.
+- **Test** runs the displayed draft without saving it. With no pending changes it tests the saved mapping. Knob tests explicitly announce **50% volume**. Tests are deliberate live actions, including in Edit mode; hardware and wheel actions are paused in Edit mode.
+- Swatches and Clear now modify the draft. Missing required targets, invalid hotkeys, missing swap targets, and unsupported knob action types block Apply/Test. Save failure preserves the draft and restores the committed in-memory mapping.
+- Knob K-number, percentage, and device name occupy separate rows. Names wrap only between words; very narrow tiles use ellipses, with the full saved label/target in a tooltip and the selected mapping in the inspector. Hardware control order is unchanged.
+- Transport buttons now initialize their labels on startup. Painted controls expose descriptive accessible names; this is not a complete keyboard/screen-reader accessibility implementation.
+- Apply no longer forces endpoint cache clearing/rediscovery for mapping edits. The existing queued-volume-before-inspector dispatch code, MIDI polling interval, SurfaceTile controls, cached endpoint machinery, shutdown path, and launcher are preserved.
+
+### Verification completed before restart
+
+- PowerShell parsing and `git diff --check` passed. Compared the dispatch block against `caddf01`: identical after newline normalization.
+- `Test-ApcDeck.ps1` now includes `Test-ApcInspector.ps1`, which exercises actual WinForms controls via `tests/InspectorCases.ps1` in a fresh **offline** smoke process. The offline mode uses fixture mappings/state and recording sinks; it does not acquire MIDI devices, persist the user profile, or change real audio.
+- Inspector cases passed: multiple retained drafts, selected-only Apply/Revert, draft Test for knobs and buttons, failure-to-save recovery, swatch/Clear semantics, required/unsupported action validation, Edit-mode wheel protection, friendly labels, initial transport labels, 90-control inventory, and visible footer/no horizontal inspector scroll at 1680×970, 1366×768, and 1200×740.
+- Long-label drafts were rendered and checked. Pre-restart captures are in `C:\Users\jdben\Documents\APC-DECK UI Audit 2026-10-28\implemented`.
+- All eight existing dispatch regression cases passed. Final full-suite receipt:
+
+```text
+PASS: Inspector interaction and layout tests; real profile unchanged; audio/MIDI writes isolated.
+PASS: ApcDeck verified (Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=21, BluetoothPaired=4, KnobSweepMs=107.53, UI=Visible)
+```
+
+The 107.53 ms measurement is the existing startup eight-knob selection/redraw smoke test, not physical MIDI arrival-to-audio latency. The offline inspector smoke in that suite measured 91.64 ms; fixture timing is not live hardware timing.
+
+### Restart and preservation
+
+- Verified the existing process identity, signaled PID 73768 through the normal Stop mode, waited for exit, and launched the existing desktop shortcut through the established Explorer/default-desktop path.
+- Replacement PID `85456` was visible/responding; the live UI showed **MIDI IN / LED OUT ONLINE** and the new inspector/footer. The window was left open. The readback after restoring approximately the previous geometry was 1665×962 at x=888/y=265 (one-pixel width rounding by the desktop tooling).
+- The profile SHA-256 remained `D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4` before tests, before restart, and after restart. A pre-restart profile copy is in the same external evidence folder.
+- After implementation and verification, the user explicitly authorized committing and pushing this first pass to `origin/main`. The implementation, regression tests, user guide, and this handoff belong to the same release.
+
+### Remaining audit scope
+
+This completes the requested first pass, not the entire audit backlog. General telemetry reconciliation, complete accessible keyboard/piano control semantics, comprehensive state/contrast treatment, physical touch testing, Narrator, and broader DPI/high-contrast qualification remain future work. Live rendered inspection followed restart; no deliberate physical MIDI/audio-write latency experiment was added.
