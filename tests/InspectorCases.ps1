@@ -134,3 +134,5 @@ Save-TestFrame 'inspector-long-draft.png'
 [Console]::WriteLine('INSPECTOR_TESTS_OK: retained drafts, Apply/Revert/Test, save failure, swatches/Clear, validation, edit-only wheel, transport labels, 90 controls, and three window sizes.')
 
 . (Join-Path $PSScriptRoot 'LiveStateCases.ps1')
+
+. (Join-Path $PSScriptRoot 'KeyboardCases.ps1')

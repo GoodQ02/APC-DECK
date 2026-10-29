@@ -12,6 +12,8 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 
 ## 1. Executive Summary & Live State
 
+**Keyboard and visible-focus pass (2026-10-29):** implemented locally on published `c1a6d80`, tested before restart, and verified online/responding as PID `81792`. All 90 mappings now have keyboard selection and accessible identities, including 25 virtual piano keys; the dispatch block remains unchanged. See Section 10. The user has authorized committing and pushing this tested pass to `origin/main`.
+
 **Live-state and pickup pass (2026-10-28):** implemented locally on top of published `5e80bb5`, tested before restart, and verified visible/online as PID `84116`. Knob observations, pickup feedback, footer telemetry, and default-endpoint cache rebinding now follow refreshed Windows state. Hardware positions and queued-volume-before-inspector ordering are preserved. See Section 9. The user has authorized committing and pushing this tested pass to `origin/main`.
 
 **Inspector first pass (2026-10-28):** the redesigned inspector, per-control session drafts, fixed Apply/Revert/Test footer, contextual fields, and readable knob labels are implemented and tested. The app was restarted only after checks passed and verified online as PID `85456`. The underlying knob-dispatch block is unchanged. See Section 8 for current behavior, evidence, and remaining scope. The user authorized committing and pushing this tested first pass to `main`; `caddf01` is the pre-first-pass baseline.
@@ -257,3 +259,34 @@ The user authorized implementation and restart after testing, keeping hardware l
 - Profile SHA-256 stayed **D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4**. The app is left open. No deliberate live volume-change or physical-knob latency experiment was performed.
 
 Remaining audit priorities: keyboard/focus and piano accessibility, broader contrast/state consistency and DPI qualification, and optional app-session readback. Reuse this pass's completed evidence unless code or conditions change.
+
+## 10. Keyboard Navigation and Visible Focus — Implemented 2026-10-29
+
+The user authorized keyboard navigation, visible focus, piano-key coverage, testing, and restart. Base is published live-state commit `c1a6d80`. After verification, the user explicitly authorized committing and pushing this pass to `origin/main`; implementation, tests, user guide, and this handoff belong to the same release.
+
+### Delivered behavior
+
+- `KeyboardNavigation.ps1` supplies one remembered tab stop per hardware group: pads, scenes, tracks, knobs, transport, and piano. Tab/Shift+Tab move between groups and the native inspector. Arrows follow the pad/knob rows and columns; piano Left/Right traverse all 25 notes chromatically. Home/End select each group's endpoints. Movement stops at group edges.
+- F6 moves from the deck to the label editor and back to the selected mapping. Enter/Space on the deck select only. Ctrl+T and Test remain explicit actions; Ctrl+S and right-click Test retain their behavior. Native text boxes and combo boxes retain ordinary editing keys.
+- A white ring with a black outline marks focus, distinct from cyan selection. White piano-key focus is drawn below the overlapping black keys, so it stays visible. Mouse selection sets the corresponding keyboard target. MIDI Learn changes selection without calling Focus or changing the remembered piano focus note.
+- `KeyboardSurface.cs` extends the existing double-buffered SurfaceTile/BufferedButton classes and adds a single KeybedCanvas with 25 cached virtual accessibility children. Names, roles, values, selection/focus, default selection actions, and piano hit testing are exposed. Piano mapping names/values notify accessibility clients when updated; knob values use cached observed state.
+- Hardware dimensions/order, mapping persistence, endpoint caches, WinMM lifecycle, launcher/placement, and the MIDI dispatch block are preserved. The piano remains one painted control; no per-key native controls or audio lookups were added to painting. Focus repaints only the affected control/canvas.
+
+### Verification before restart
+
+- Extended the existing offline WinForms harness with `tests/KeyboardCases.ps1`; its success marker is required by `Test-ApcInspector.ps1`. All 90 accessible default actions selected their mapping without executing audio/actions or saving. Cases also cover spatial arrows, six roving tab groups, native key acceptance, inspector boundaries, F6, 25 chromatic notes, boundary stops, piano focus/selection/hit testing, retained drafts, and MIDI selection preserving editor focus.
+- Rendered focus on a pad, black key, and white key at **1680×970, 1366×768, and 1200×740**. Evidence: `C:\Users\jdben\Documents\APC-DECK UI Audit 2026-10-29\keyboard`.
+- A separate temporary offline window verified actual Windows input delivery and accessibility traversal before production restart. Windows accessibility inspection returned all **90 mappings, including 25 piano keys**. Native arrows, group Tab, inspector Shift+Tab, F6, and More-actions-to-deck Tab were confirmed by state readback. Background modifier delivery did not reproduce Shift+Tab, so that one key was repeated using foreground delivery and confirmed. The probe was closed normally and never acquired MIDI or wrote the real profile/audio.
+- PowerShell parsing and `git diff --check` passed. Compared the queued-CC dispatch block against `c1a6d80`: identical after newline normalization.
+- Full `Test-ApcDeck.ps1` passed: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=19, BluetoothPaired=4, KnobSweepMs=149.45, UI=Visible**. The offline UI sweep was 114.77 ms. These are existing startup selection/redraw tests, not physical MIDI-to-audio timing. Endpoint count reflects current Windows state, not a test mutation.
+
+### Restart and preservation
+
+- Verified PID 84116's command line and no pending drafts, signaled normal Stop, waited for exit, and launched the existing desktop shortcut through Explorer/default desktop only after all tests passed.
+- Replacement PID **81792**, HWND **4132662**, is visible/responding with **MIDI IN / LED OUT ONLINE**. Restored prior geometry: 1665×962 at x=888/y=265 (one-pixel tooling rounding).
+- Live accessibility readback again exposed all 90 mappings. A safe live selection check focused C-sharp 3 and sent Right; inspector readback showed **KEY D3 / Key_50**, with the white-key focus ring visible. No mapping was executed. The app is left open with D3 selected.
+- Profile SHA-256 remained **D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4** before tests and after restart/live selection.
+
+### Remaining scope
+
+Keyboard behavior and accessibility-object/provider coverage were verified; a full Narrator user journey, high-contrast theme qualification, and broader increased-text/DPI coverage were not performed. Next audit work is contrast and pad readability, separating operational status from customizable physical LED colors without changing hardware LED outputs. App-session volume readback remains a separate optional improvement.

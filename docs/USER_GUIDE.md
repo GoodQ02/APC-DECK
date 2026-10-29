@@ -83,6 +83,15 @@ The inspector shows the selected control, with **Follow hardware selection**, **
 - **Edit mode** pauses physical MIDI actions and on-screen knob-wheel volume changes. It does not disable explicit Test or the **Mute saved device (0%)** command.
 - **More actions…** contains Mute saved device, Clear mapping in draft, Refresh devices & LEDs (F5), Keep running in tray, and Reset entire profile. Clear is reversible until Apply. Reset still asks for confirmation and discards all drafts.
 
+### Keyboard navigation and focus
+
+- **Tab / Shift+Tab** move between pads, scenes, tracks, knobs, transport, piano, and the inspector. Each hardware group remembers its last focused member, so you do not have to Tab through all 90 controls.
+- **Arrow keys** select adjacent controls within a group, following the physical rows and columns. On the piano, **Left/Right** move one semitone, including every black key. Group edges stop movement; **Home/End** select the first/last control in the group.
+- **F6** moves from the deck to the label editor, or from the inspector back to the selected mapping. Native text fields and dropdowns keep their normal arrow-key behavior.
+- **Enter/Space on the deck select only**. **Ctrl+T** or the inspector's Test button explicitly runs the selected mapping/draft; Ctrl+S still applies it. Right-click testing remains available.
+- A white focus ring with a black outline marks the keyboard target. Cyan marks the selected mapping. MIDI Learn may change selection while you edit, but does not steal keyboard focus.
+- All 90 mappings expose accessible names and selection semantics; the piano provides 25 individual accessible keys while remaining one lightweight painted canvas. Knobs expose their observed level/status. Full Narrator and high-contrast qualification remains separate from the tested keyboard/accessibility-object behavior.
+
 ## 4. Colors and Readable Knob Labels
 
 - LED-equipped pads, scene buttons, and track buttons expose **Active LED color** and **Standby LED color**. Piano keys and transport buttons expose their on-screen color; knobs have no color fields.

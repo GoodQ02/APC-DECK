@@ -128,23 +128,23 @@ Add-Type -AssemblyName System.Drawing
 [Windows.Forms.Application]::EnableVisualStyles()
 
 if (-not ('GoodCube.ApcDeck.BufferedButton' -as [type])) {
-    Add-Type -ReferencedAssemblies @('System.Windows.Forms', 'System.Windows.Forms.Primitives', 'System.Drawing', 'System.Drawing.Common', 'System.ComponentModel.Primitives', 'System.Drawing.Primitives') -TypeDefinition @"
+    Add-Type -ReferencedAssemblies @('System.Windows.Forms', 'System.Windows.Forms.Primitives', 'System.Drawing', 'System.Drawing.Common', 'System.ComponentModel.Primitives', 'System.Drawing.Primitives', 'Accessibility') -TypeDefinition (@"
 using System;
 using System.Windows.Forms;
 namespace GoodCube.ApcDeck {
-    public class BufferedButton : Button {
+    public partial class BufferedButton : Button {
         public BufferedButton() {
             this.DoubleBuffered = true;
             this.ResizeRedraw = true;
             this.SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         }
     }
-    public class SurfaceTile : Control {
+    public partial class SurfaceTile : Control {
         public SurfaceTile() {
             this.DoubleBuffered = true;
             this.ResizeRedraw = true;
             this.Cursor = Cursors.Hand;
-            this.SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.StandardClick | ControlStyles.StandardDoubleClick, true);
+            this.SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable | ControlStyles.UserPaint | ControlStyles.StandardClick | ControlStyles.StandardDoubleClick, true);
         }
         protected override void OnPaintBackground(PaintEventArgs pevent) {
             // Paint handlers clear the full surface directly
@@ -173,7 +173,7 @@ namespace GoodCube.ApcDeck {
         }
     }
 }
-"@
+"@ + [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'KeyboardSurface.cs')))
 }
 
 if ($OfflinePreview) {
@@ -411,7 +411,7 @@ $headerPanel.Add_Paint({
         # APC key 25 silkscreen title
         $g.DrawString('APC key 25', $script:FHeaderModel, [Drawing.Brushes]::White, 196, 11)
         $mutedBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(148, 163, 184))
-        $g.DrawString('Hardware mapper  ·  Select to edit  ·  Right-click to test', $script:FHeaderSub, $mutedBrush, 322, 17)
+        $g.DrawString('Arrows select  ·  Tab groups  ·  F6 edit  ·  Ctrl+T test', $script:FHeaderSub, $mutedBrush, 322, 17)
 
         # Live MIDI connection pill on far right
         $isOpen = [GoodCube.ApcDeck.NativeBridge]::IsOpen
@@ -920,7 +920,7 @@ $keysGroup.BackColor = $cBezelBg
 $keysGroup.Padding = [Windows.Forms.Padding]::new(8, 6, 8, 8)
 $chassisLayout.Controls.Add($keysGroup, 0, 1)
 
-$keybedCanvas = [GoodCube.ApcDeck.BufferedPanel]::new()
+$keybedCanvas = [GoodCube.ApcDeck.KeybedCanvas]::new()
 $keybedCanvas.Dock = 'Fill'
 $keybedCanvas.BackColor = [Drawing.Color]::FromArgb(12, 14, 18)
 $keybedCanvas.Cursor = [Windows.Forms.Cursors]::Hand
@@ -969,6 +969,16 @@ function Update-PianoKeybedGeometry {
         $centerX = [int][Math]::Round(($bk.AfterWhiteIdx + 1) * $whiteW)
         $bx = $centerX - [int]($blackW / 2)
         $script:BlackKeyRects["Key_$($bk.Note)"] = [Drawing.Rectangle]::new($bx, 2, $blackW, $blackH)
+    }
+    foreach ($n in 48..72) {
+        $cid = "Key_$n"
+        $black = $script:BlackKeyRects.ContainsKey($cid)
+        $rect = if ($black) { $script:BlackKeyRects[$cid] } else { $script:WhiteKeyRects[$cid] }
+        $keybedCanvas.KeyBounds[$n - 48] = $rect
+        $keybedCanvas.BlackKeys[$n - 48] = $black
+        # Focus white keys below the black-key overlap so the ring is never obscured.
+        if (-not $black) { $rect = [Drawing.Rectangle]::new($rect.X, $blackH + 5, $rect.Width, $rect.Bottom - $blackH - 5) }
+        $keybedCanvas.KeyFocusBounds[$n - 48] = $rect
     }
     $keybedCanvas.Invalidate()
 }
@@ -1128,7 +1138,7 @@ $keybedCanvas.Add_MouseDown({
     param($sender, $e)
     $cid = Get-PianoKeyAtPoint $e.X $e.Y
     if (-not $cid) { return }
-    Select-ApcControl $cid
+    Focus-ApcControl $cid
     if ($e.Button -eq [Windows.Forms.MouseButtons]::Right) {
         $btnTest.PerformClick()
     } elseif ($script:ProfileMap.ContainsKey($cid)) {
@@ -1488,16 +1498,26 @@ function Get-UiColorForColorName([string]$colorName, [Drawing.Color]$fallback) {
 }
 
 function Update-ControlDescription([string]$cid) {
-    if (-not $script:ControlButtons.ContainsKey($cid)) { return }
     $m = $script:ProfileMap[$cid]
+    if ($cid.StartsWith('Key_')) {
+        $note = [int]$cid.Substring(4)
+        $names = @('C','C sharp','D','D sharp','E','F','F sharp','G','G sharp','A','A sharp','B')
+        $name = "$($names[$note % 12]) $([int][math]::Floor($note / 12) - 1) — $($m.Label) — $cid"
+        $keybedCanvas.UpdateKeyDescription($note, $name, "$($m.ActionType) $($m.Target)".Trim())
+        return
+    }
+    if (-not $script:ControlButtons.ContainsKey($cid)) { return }
     $control = $script:ControlButtons[$cid]
     $control.AccessibleName = "$cid — $($m.Label)"
     $detail = "$($m.Label)`n$($m.Target)`n$cid · $($m.ActionType)"
     if ($cid.StartsWith('Knob_')) {
         $feedback = Get-KnobFeedback $cid $chkPickupMode.Checked $chkEditOnly.Checked
         $detail += "`n$feedback (CW = clockwise; CCW = counterclockwise)"
-        $control.AccessibleDescription = $detail
+        $state = $script:KnobStates[$cid]
+        $detail += if ($state.Known) { "`nLevel $($script:KnobValues[$cid]) percent; $($state.Status)" } else { "`n$($state.Status)" }
     }
+    $control.AccessibleDescription = $detail + "`nArrows select; Tab changes group; F6 edits; Ctrl+T tests."
+    $control.MappingValue = $detail
     $toolTips.SetToolTip($control, $detail)
 }
 
@@ -1611,6 +1631,9 @@ function Select-ApcControl([string]$cid) {
     if (-not $script:ProfileMap.ContainsKey($cid)) { return }
     $oldId = $script:SelectedId
     $script:SelectedId = $cid
+    if ($script:ControlButtons.ContainsKey($oldId)) { $script:ControlButtons[$oldId].MappingSelected = $false }
+    if ($script:ControlButtons.ContainsKey($cid)) { $script:ControlButtons[$cid].MappingSelected = $true }
+    $keybedCanvas.SelectedNote = if ($cid.StartsWith('Key_')) { [int]$cid.Substring(4) } else { -1 }
     $m = if ($script:Drafts.ContainsKey($cid)) { $script:Drafts[$cid] } else { $script:ProfileMap[$cid] }
     $inspFlow.SuspendLayout()
     $script:SuppressInspectorEvents = $true
@@ -1650,7 +1673,7 @@ function Select-ApcControl([string]$cid) {
 foreach ($btn in $script:ControlButtons.Values) {
     $btn.Add_Click({
         $cid = [string]$this.Tag
-        Select-ApcControl $cid
+        Focus-ApcControl $cid
         if ($script:ProfileMap.ContainsKey($cid)) {
             $m = $script:ProfileMap[$cid]
             Set-StatusBanner "Selected $cid [$($m.Label)] -> Action=$($m.ActionType) Target='$($m.Target)' LED=$($m.LedColor) (Right-click to test)"
@@ -1660,11 +1683,13 @@ foreach ($btn in $script:ControlButtons.Values) {
         param($sender, $e)
         if ($e.Button -eq [Windows.Forms.MouseButtons]::Right) {
             $cid = [string]$sender.Tag
-            Select-ApcControl $cid
+            Focus-ApcControl $cid
             $btnTest.PerformClick()
         }
     })
 }
+
+. (Join-Path $PSScriptRoot 'KeyboardNavigation.ps1')
 
 $cmbAction.Add_SelectedIndexChanged({
     if (-not $script:SuppressInspectorEvents) {
@@ -2082,7 +2107,7 @@ $chkEditOnly.Add_CheckedChanged($refreshKnobFeedback)
 
 $form.Add_Load({
     Update-PianoKeybedGeometry
-    foreach ($cid in @($script:ControlButtons.Keys)) { Update-ControlDescription $cid }
+    foreach ($cid in @($script:ProfileMap.Keys)) { Update-ControlDescription $cid }
     foreach ($cid in @('Trans_91','Trans_93','Trans_98')) { Invalidate-ApcControl $cid }
     Resize-InspectorContent
     Select-ApcControl 'Pad_32'
