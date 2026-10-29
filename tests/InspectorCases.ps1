@@ -1,4 +1,4 @@
-# Dot-sourced only by the offline UI smoke process, after the actual form has loaded.
+﻿# Dot-sourced only by the offline UI smoke process, after the actual form has loaded.
 if (-not $OfflinePreview -or -not $SmokeTestUi) { throw 'Inspector cases require offline smoke mode.' }
 $script:TestSaves = 0
 $script:TestAudio = [Collections.Generic.List[object]]::new()
@@ -132,3 +132,5 @@ Select-ApcControl 'Knob_49'
 Assert-Ui ($txtLabel.Text -eq 'A long device label with more detail') 'Long draft did not survive selection.'
 Save-TestFrame 'inspector-long-draft.png'
 [Console]::WriteLine('INSPECTOR_TESTS_OK: retained drafts, Apply/Revert/Test, save failure, swatches/Clear, validation, edit-only wheel, transport labels, 90 controls, and three window sizes.')
+
+. (Join-Path $PSScriptRoot 'LiveStateCases.ps1')

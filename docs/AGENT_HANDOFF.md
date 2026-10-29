@@ -12,6 +12,8 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 
 ## 1. Executive Summary & Live State
 
+**Live-state and pickup pass (2026-10-28):** implemented locally on top of published `5e80bb5`, tested before restart, and verified visible/online as PID `84116`. Knob observations, pickup feedback, footer telemetry, and default-endpoint cache rebinding now follow refreshed Windows state. Hardware positions and queued-volume-before-inspector ordering are preserved. See Section 9. The user has authorized committing and pushing this tested pass to `origin/main`.
+
 **Inspector first pass (2026-10-28):** the redesigned inspector, per-control session drafts, fixed Apply/Revert/Test footer, contextual fields, and readable knob labels are implemented and tested. The app was restarted only after checks passed and verified online as PID `85456`. The underlying knob-dispatch block is unchanged. See Section 8 for current behavior, evidence, and remaining scope. The user authorized committing and pushing this tested first pass to `main`; `caddf01` is the pre-first-pass baseline.
 
 **Previously verified dispatch change (2026-10-28):** queued knob volume updates now run before one coalesced inspector selection. Commit `7a56312` was pushed to GitHub with explicit user authorization; local and remote `main` were verified to match at `7a563125b640ccf6f850a7957afb95b6cf9b4839` after that push. See Section 7 for measured results and their limits. The earlier `~105 ms` sweep is a historical observation, not a guaranteed current baseline.
@@ -225,3 +227,33 @@ The 107.53 ms measurement is the existing startup eight-knob selection/redraw sm
 ### Remaining audit scope
 
 This completes the requested first pass, not the entire audit backlog. General telemetry reconciliation, complete accessible keyboard/piano control semantics, comprehensive state/contrast treatment, physical touch testing, Narrator, and broader DPI/high-contrast qualification remain future work. Live rendered inspection followed restart; no deliberate physical MIDI/audio-write latency experiment was added.
+
+## 9. Live-State Accuracy and Pickup Feedback — Implemented 2026-10-28
+
+The user authorized implementation and restart after testing, keeping hardware layout and latency fixes intact. Base: published inspector commit `5e80bb5`. After verification, the user explicitly authorized committing and pushing this pass to `origin/main`; implementation, tests, user guide, and this handoff belong to the same release.
+
+### Behavior and implementation
+
+- `KnobState.ps1` derives per-knob observations entirely from the existing audio snapshot. It matches the writer's active-endpoint preference, distinguishes observed levels from pending commands, and re-arms pickup on external level/mute changes, endpoint switches, mapping changes, and reconnects.
+- Every knob has local feedback: Awaiting turn, CW/CCW target percentage, In sync, Direct, Updating, or explicit unavailable/disabled/disconnected status. Muted is labeled separately. Unknown levels render a dash. Compact tiles shorten text and omit dial artwork; all control positions and the 90-control inventory are unchanged. Full feedback is available in tooltips.
+- The existing 5-second refresh now updates knobs, footer, Bluetooth audio-derived evidence, and changed pads. It preserves the last event message, runs even when MIDI is disconnected, and retains the 800 ms active-turn deferral. Refresh failures mark knob/footer telemetry unavailable until recovery. This is periodic reconciliation, not continuous CoreAudio event notification.
+- Snapshot completion clears stale endpoint aliases/negative lookups while preserving friendly-name and device snapshots. Default output writes therefore follow the refreshed default instead of a previous cached endpoint.
+- Fixed the existing changed-pad loop's `$pId` collision with PowerShell's read-only `$PID`, plus empty-match handling for mute-pad LEDs. Both could prevent accurate unavailable/mute refreshes.
+- All coalesced volume writes complete before knob redraw/tooltip work and the single inspector selection. The 16 ms MIDI timer, cached write path, targeted invalidation, SurfaceTile controls, safe WinMM shutdown, DPI/launcher behavior, and retained drafts remain in place. No new COM lookup occurs in knob painting or state reconciliation.
+- `VolumeApp` has no session readback observer. It explicitly displays No readback (compact: Unverified), retaining direct writes without pretending endpoint pickup can validate application session levels. Bluetooth connected/disconnected remains an inference from known audio endpoints, not general radio status.
+
+### Tests completed before restart
+
+- `Test-ApcDeck.ps1` passed, including ten dispatch cases, the real snapshot/resolver cache path with fake endpoints, existing inspector/draft tests, and the actual WinForms sync timer driven with offline fixtures.
+- Live-state cases covered external volume/mute, same-level default switch, shared endpoint mappings, disconnected/disabled/reconnected devices, confirmed own writes, both pickup directions, unchanged-snapshot redraw suppression, active-turn grace, snapshot failure/recovery, empty observations, app readback limitations, and retained footer events. Fixtures made no real audio/profile writes.
+- Final full-suite receipt: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=21, BluetoothPaired=4, KnobSweepMs=123.67, UI=Visible**. The offline UI sweep was 99.28 ms. These are startup selection/redraw tests, not physical MIDI-to-audio timing.
+- PowerShell parsing and `git diff --check` passed. Rendered checks covered 1680×970, 1366×768, and 1200×740. Captures are in `C:\Users\jdben\Documents\APC-DECK UI Audit 2026-10-28\live-state`.
+
+### Restart and live evidence
+
+- Confirmed PID 85456's command line and that the inspector showed no pending changes, then used normal Stop mode. It exited before Wait-Process attached; verified absent before launching the existing desktop shortcut through Explorer on the default desktop.
+- Replacement PID **84116**, HWND **4067126**, was visible/responding and displayed MIDI IN / LED OUT ONLINE. Restored the prior window frame: 1665×962 at x=888/y=265 (desktop tooling rounds the requested width by one pixel).
+- Post-restart rendered levels matched a fresh read-only Windows snapshot: master 42%, COMMAND_CENTER 31%, VOICE_CUBE 38%, M-AUDIO 34%, CMD_MIC 100%, PS5_MIC 10%; PS5_HEADPHONES and META_VR output both 0% and muted.
+- Profile SHA-256 stayed **D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4**. The app is left open. No deliberate live volume-change or physical-knob latency experiment was performed.
+
+Remaining audit priorities: keyboard/focus and piano accessibility, broader contrast/state consistency and DPI qualification, and optional app-session readback. Reuse this pass's completed evidence unless code or conditions change.

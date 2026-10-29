@@ -203,6 +203,9 @@ $script:ControlButtons          = @{}
 $script:KnobValues              = @{}
 $script:KnobPickedUp            = @{}
 $script:KnobLastPhys            = @{}
+$script:KnobStates              = @{}
+$script:LastStatusEvent         = ''
+. (Join-Path $PSScriptRoot 'KnobState.ps1')
 $script:PadVelocities           = @{}
 $script:SuppressInspectorEvents = $false
 $script:LastKnobTurnTick        = [int64]0
@@ -226,8 +229,8 @@ function Update-CachedTelemetrySummaries {
             elseif ($ep.Flow -eq 'Capture' -and $null -eq $defIn) { $defIn = $ep }
         }
     }
-    $script:CachedSpeakerSummary = if ($defOut) { "$(Format-CompactText $defOut.FriendlyName 26) ($($defOut.VolumePct)%$(if($defOut.Muted){' MUTED'}else{''}))" } else { 'None' }
-    $script:CachedMicSummary     = if ($defIn)  { "$(Format-CompactText $defIn.FriendlyName 24) ($($defIn.VolumePct)%$(if($defIn.Muted){' MUTED'}else{''}))" } else { 'None' }
+    $script:CachedSpeakerSummary = if ($defOut) { "$(Format-CompactText $defOut.FriendlyName 26) ($(if ($null -eq $defOut.VolumePct) { 'level unavailable' } else { "$($defOut.VolumePct)%" })$(if($defOut.Muted){' MUTED'}else{''}))" } else { 'None' }
+    $script:CachedMicSummary     = if ($defIn)  { "$(Format-CompactText $defIn.FriendlyName 24) ($(if ($null -eq $defIn.VolumePct) { 'level unavailable' } else { "$($defIn.VolumePct)%" })$(if($defIn.Muted){' MUTED'}else{''}))" } else { 'None' }
 }
 
 function Update-PadVelocitiesCache {
@@ -250,16 +253,11 @@ $null = Update-PadVelocitiesCache
 
 foreach ($cc in 48..55) {
     $cid = "Knob_$cc"
-    $script:KnobValues[$cid]   = 75
+    $script:KnobValues[$cid] = 0
     $script:KnobPickedUp[$cid] = $false
     $script:KnobLastPhys[$cid] = -1
-    if ($script:ProfileMap.ContainsKey($cid)) {
-        $curPct = Get-CurrentMappingVolumePct -Mapping $script:ProfileMap[$cid]
-        if ($null -ne $curPct) {
-            $script:KnobValues[$cid] = [int]$curPct
-        }
-    }
 }
+$null = Sync-KnobObservations
 
 $openMsg = if ($OfflinePreview) { 'Offline preview' } else { [GoodCube.ApcDeck.NativeBridge]::OpenDevice('APC Key 25') }
 $script:LastMidiOpenState = [GoodCube.ApcDeck.NativeBridge]::IsOpen
@@ -316,6 +314,7 @@ $script:FKnobLbl     = [Drawing.Font]::new('Segoe UI Semibold', 7.8, [Drawing.Fo
 $script:FKnobSub     = [Drawing.Font]::new('Segoe UI', 6.8, [Drawing.FontStyle]::Regular)
 $script:FKnobPct     = [Drawing.Font]::new('Consolas', 7.8, [Drawing.FontStyle]::Bold)
 $script:FKnobName    = [Drawing.Font]::new('Segoe UI Semibold', 9.0, [Drawing.FontStyle]::Bold)
+$script:FKnobFeedback = [Drawing.Font]::new('Segoe UI', 8.0, [Drawing.FontStyle]::Regular)
 $script:FKnobValue   = [Drawing.Font]::new('Segoe UI Semibold', 10.0, [Drawing.FontStyle]::Bold)
 $script:FKeyNoteW    = [Drawing.Font]::new('Segoe UI Semibold', 7.8, [Drawing.FontStyle]::Bold)
 $script:FKeyLblW     = [Drawing.Font]::new('Segoe UI Semibold', 7.2, [Drawing.FontStyle]::Bold)
@@ -726,6 +725,9 @@ $knobPaintHandler = {
         $m   = if ($script:ProfileMap.ContainsKey($cid)) { $script:ProfileMap[$cid] } else { $null }
         $sel = ($cid -eq $script:SelectedId)
         $pct = if ($script:KnobValues.ContainsKey($cid)) { [int]$script:KnobValues[$cid] } else { 0 }
+        $state = $script:KnobStates[$cid]
+        $known = $state -and $state.Known
+        $feedback = Get-KnobFeedback $cid $chkPickupMode.Checked $chkEditOnly.Checked
         $cc  = [int]($cid -replace '^Knob_','')
         $kIdx = ($cc - 47)
 
@@ -733,7 +735,7 @@ $knobPaintHandler = {
         $h = $sender.ClientSize.Height
         $g.Clear($cBezelBg)
 
-        $cardBg = if ($sel) { [Drawing.Color]::FromArgb(32, 45, 66) } elseif ($pct -eq 0) { [Drawing.Color]::FromArgb(52, 18, 24) } else { $cDeckSurface }
+        $cardBg = if ($sel) { [Drawing.Color]::FromArgb(32, 45, 66) } elseif ($known -and $state.Muted) { [Drawing.Color]::FromArgb(52, 18, 24) } else { $cDeckSurface }
         $cardBrush = [Drawing.SolidBrush]::new($cardBg)
         $g.FillRectangle($cardBrush, 2, 2, $w - 4, $h - 4)
 
@@ -744,54 +746,68 @@ $knobPaintHandler = {
         }
         $g.DrawRectangle($borderPen, 2, 2, $w - 5, $h - 5)
 
-        # Dial geometry — generously proportioned to fill the 2x4 knob cell
-        $dialDiam = [Math]::Max(18, [Math]::Min($w - 20, $h - 94))
-        $dialX    = [int](($w - $dialDiam) / 2)
-        $dialY    = 20
-        $cx       = $dialX + ($dialDiam / 2.0)
-        $cy       = $dialY + ($dialDiam / 2.0)
+        $arcColor = if (-not $known) { [Drawing.Color]::FromArgb(148, 163, 184) } elseif ($state.Muted -or $pct -eq 0) { $cRedGlow } elseif ($pct -ge 95) { $cGreenGlow } else { $cCyanSelect }
+        # Compact tiles prioritize readable values and feedback over the dial artwork.
+        if ($h -ge 145) {
+            # Dial geometry — generously proportioned to fill the 2x4 knob cell
+            $dialDiam = [Math]::Max(18, [Math]::Min($w - 20, $h - 112))
+            $dialX    = [int](($w - $dialDiam) / 2)
+            $dialY    = 20
+            $cx       = $dialX + ($dialDiam / 2.0)
+            $cy       = $dialY + ($dialDiam / 2.0)
 
-        # Track arc (135 deg to +270 deg sweep)
-        $trackPen = [Drawing.Pen]::new([Drawing.Color]::FromArgb(51, 65, 85), 4.5)
-        $trackPen.StartCap = [Drawing.Drawing2D.LineCap]::Round
-        $trackPen.EndCap   = [Drawing.Drawing2D.LineCap]::Round
-        $g.DrawArc($trackPen, $dialX, $dialY, $dialDiam, $dialDiam, 135, 270)
+            # Track arc (135 deg to +270 deg sweep)
+            $trackPen = [Drawing.Pen]::new([Drawing.Color]::FromArgb(51, 65, 85), 4.5)
+            $trackPen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+            $trackPen.EndCap   = [Drawing.Drawing2D.LineCap]::Round
+            $g.DrawArc($trackPen, $dialX, $dialY, $dialDiam, $dialDiam, 135, 270)
 
-        $arcColor = if ($pct -eq 0) { $cRedGlow } elseif ($pct -ge 95) { $cGreenGlow } else { $cCyanSelect }
-        $valPen = [Drawing.Pen]::new($arcColor, 4.5)
-        $valPen.StartCap = [Drawing.Drawing2D.LineCap]::Round
-        $valPen.EndCap   = [Drawing.Drawing2D.LineCap]::Round
-        $sweep = [float]([Math]::Max(4.0, ($pct / 100.0) * 270.0))
-        $g.DrawArc($valPen, $dialX, $dialY, $dialDiam, $dialDiam, 135, $sweep)
+            $valPen = [Drawing.Pen]::new($arcColor, 4.5)
+            $valPen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+            $valPen.EndCap   = [Drawing.Drawing2D.LineCap]::Round
+            $sweep = [float]([Math]::Max(4.0, ($pct / 100.0) * 270.0))
+            if ($known) { $g.DrawArc($valPen, $dialX, $dialY, $dialDiam, $dialDiam, 135, $sweep) }
 
-        # Inner dark anodized rotary cap
-        $capInset = 6
-        $capBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(17, 20, 27))
-        $capPen   = [Drawing.Pen]::new([Drawing.Color]::FromArgb(90, 102, 122), 1.2)
-        $g.FillEllipse($capBrush, $dialX + $capInset, $dialY + $capInset, $dialDiam - ($capInset * 2), $dialDiam - ($capInset * 2))
-        $g.DrawEllipse($capPen,   $dialX + $capInset, $dialY + $capInset, $dialDiam - ($capInset * 2), $dialDiam - ($capInset * 2))
+            # Inner dark anodized rotary cap
+            $capInset = 6
+            $capBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(17, 20, 27))
+            $capPen   = [Drawing.Pen]::new([Drawing.Color]::FromArgb(90, 102, 122), 1.2)
+            $g.FillEllipse($capBrush, $dialX + $capInset, $dialY + $capInset, $dialDiam - ($capInset * 2), $dialDiam - ($capInset * 2))
+            $g.DrawEllipse($capPen,   $dialX + $capInset, $dialY + $capInset, $dialDiam - ($capInset * 2), $dialDiam - ($capInset * 2))
 
-        # Pointer needle
-        $angleDeg = 135.0 + (($pct / 100.0) * 270.0)
-        $angleRad = $angleDeg * ([Math]::PI / 180.0)
-        $rInner   = ($dialDiam / 2.0) * 0.25
-        $rOuter   = ($dialDiam / 2.0) - $capInset - 2.0
-        $x1 = [float]($cx + [Math]::Cos($angleRad) * $rInner)
-        $y1 = [float]($cy + [Math]::Sin($angleRad) * $rInner)
-        $x2 = [float]($cx + [Math]::Cos($angleRad) * $rOuter)
-        $y2 = [float]($cy + [Math]::Sin($angleRad) * $rOuter)
-        $needlePen = [Drawing.Pen]::new([Drawing.Color]::White, 2.3)
-        $needlePen.StartCap = [Drawing.Drawing2D.LineCap]::Round
-        $needlePen.EndCap   = [Drawing.Drawing2D.LineCap]::Round
-        $g.DrawLine($needlePen, $x1, $y1, $x2, $y2)
+            # Pointer needle
+            $angleDeg = 135.0 + (($pct / 100.0) * 270.0)
+            $angleRad = $angleDeg * ([Math]::PI / 180.0)
+            $rInner   = ($dialDiam / 2.0) * 0.25
+            $rOuter   = ($dialDiam / 2.0) - $capInset - 2.0
+            $x1 = [float]($cx + [Math]::Cos($angleRad) * $rInner)
+            $y1 = [float]($cy + [Math]::Sin($angleRad) * $rInner)
+            $x2 = [float]($cx + [Math]::Cos($angleRad) * $rOuter)
+            $y2 = [float]($cy + [Math]::Sin($angleRad) * $rOuter)
+            $needlePen = [Drawing.Pen]::new([Drawing.Color]::White, 2.3)
+            $needlePen.StartCap = [Drawing.Drawing2D.LineCap]::Round
+            $needlePen.EndCap   = [Drawing.Drawing2D.LineCap]::Round
+            if ($known) { $g.DrawLine($needlePen, $x1, $y1, $x2, $y2) }
 
-        # Center cap pivot dot
-        $g.FillEllipse([Drawing.Brushes]::DimGray, [float]($cx - 3), [float]($cy - 3), 6.0, 6.0)
+            # Center cap pivot dot
+            $g.FillEllipse([Drawing.Brushes]::DimGray, [float]($cx - 3), [float]($cy - 3), 6.0, 6.0)
 
-        $pctText = "$pct%"
+            $trackPen.Dispose(); $valPen.Dispose(); $capBrush.Dispose(); $capPen.Dispose(); $needlePen.Dispose()
+        }
+        if ($w -lt 85) {
+            $feedback = switch ($feedback) {
+                'Awaiting turn' { 'Waiting' }
+                'Disconnected' { 'Offline' }
+                'No readback' { 'Unverified' }
+                'Updating...' { 'Updating' }
+                default { $feedback -replace ' to ', ' ' }
+            }
+        }
+        $pctText = if (-not $known) { '—' } else { "$pct%" }
         $pctBrush = [Drawing.SolidBrush]::new($arcColor)
-        $g.DrawString("K$kIdx", $script:FKnobTop, [Drawing.Brushes]::Silver, [Drawing.RectangleF]::new(3, 3, $w - 6, 17), $script:SfCenter)
-        $g.DrawString($pctText, $script:FKnobValue, $pctBrush, [Drawing.RectangleF]::new(3, $h - 67, $w - 6, 23), $script:SfCenter)
+        $g.DrawString("K$kIdx$(if ($known -and $state.Muted -and -not $state.Pending) { ' muted' })", $script:FKnobTop, [Drawing.Brushes]::Silver, [Drawing.RectangleF]::new(3, 3, $w - 6, 17), $script:SfCenter)
+        $g.DrawString($pctText, $script:FKnobValue, $pctBrush, [Drawing.RectangleF]::new(3, $h - 85, $w - 6, 23), $script:SfCenter)
+        $g.DrawString($feedback, $script:FKnobFeedback, [Drawing.Brushes]::LightSteelBlue, [Drawing.RectangleF]::new(3, $h - 62, $w - 6, 18), $script:SfCenter)
         $cleanLbl = if ($m -and $m.Label) { $m.Label -replace '^K\d+:\s*','' } else { "Knob $kIdx" }
         # Wrap between words only; never fragment a device name into individual letters.
         $splitAt = $cleanLbl.LastIndexOf(' ')
@@ -802,8 +818,7 @@ $knobPaintHandler = {
             $g.DrawString($cleanLbl, $script:FKnobName, [Drawing.Brushes]::White, [Drawing.RectangleF]::new(4, $h - 43, $w - 8, 40), $script:SfCenter)
         }
 
-        $cardBrush.Dispose(); $borderPen.Dispose(); $trackPen.Dispose(); $valPen.Dispose()
-        $capBrush.Dispose(); $capPen.Dispose(); $needlePen.Dispose(); $pctBrush.Dispose()
+        $cardBrush.Dispose(); $borderPen.Dispose(); $pctBrush.Dispose()
     } catch { }
 }
 
@@ -823,6 +838,7 @@ for ($i = 0; $i -lt 8; $i++) {
             if ($chkEditOnly.Checked) { return }
             $kId = [string]$sender.Tag
             if (-not $script:ProfileMap.ContainsKey($kId)) { return }
+            if (-not $script:KnobStates[$kId].Known -and $script:KnobStates[$kId].Status -ne 'No readback') { return }
             $cur = if ($script:KnobValues.ContainsKey($kId)) { [int]$script:KnobValues[$kId] } else { 50 }
             $step = if ($e.Delta -gt 0) { 2 } else { -2 }
             $newPct = [Math]::Max(0, [Math]::Min(100, $cur + $step))
@@ -830,7 +846,9 @@ for ($i = 0; $i -lt 8; $i++) {
             $script:KnobValues[$kId] = $newPct
             $script:LastKnobTurnTick = [Environment]::TickCount64
             $res = Set-AudioVolumeByMapping -Mapping $script:ProfileMap[$kId] -MidiValue $midiVal -AutoMuteAtZero
-            $sender.Invalidate()
+            Set-KnobCommand $kId ([int][math]::Round((Convert-MidiCcToScalar $midiVal) * 100))
+            $script:KnobPickedUp[$kId] = $false
+            Invalidate-ApcControl $kId
             Set-StatusBanner "MouseWheel [$($script:ProfileMap[$kId].Label)] -> $res"
         } catch { }
     })
@@ -1337,12 +1355,21 @@ $statusBox.Font = [Drawing.Font]::new('Consolas', 9.2)
 $rootLayout.Controls.Add($statusBox, 0, 2)
 
 function Set-StatusBanner([string]$eventText) {
+    if ($PSBoundParameters.ContainsKey('eventText')) { $script:LastStatusEvent = $eventText }
     $isOpen = [GoodCube.ApcDeck.NativeBridge]::IsOpen
     $midiState = if ($isOpen) { 'ONLINE (IN + LED OUT)' } else { 'OFFLINE' }
-    $statusBox.Text = "MIDI: $midiState  |  Speaker: $($script:CachedSpeakerSummary)  |  Mic: $($script:CachedMicSummary)`r`nEvent: $(Format-CompactText $eventText 135)"
+    $text = "MIDI: $midiState  |  Speaker: $($script:CachedSpeakerSummary)  |  Mic: $($script:CachedMicSummary)`r`nEvent: $(Format-CompactText $script:LastStatusEvent 135)"
+    if ($statusBox.Text -cne $text) { $statusBox.Text = $text }
     if ($isOpen -ne $script:LastMidiOpenState) {
         $script:LastMidiOpenState = $isOpen
         $headerPanel.Invalidate()
+    }
+}
+
+function Update-ObservedControls {
+    $script:BtSnapshot = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
+    foreach ($changedId in @(Sync-KnobObservations)) {
+        Invalidate-ApcControl $changedId
     }
 }
 
@@ -1465,7 +1492,13 @@ function Update-ControlDescription([string]$cid) {
     $m = $script:ProfileMap[$cid]
     $control = $script:ControlButtons[$cid]
     $control.AccessibleName = "$cid — $($m.Label)"
-    $toolTips.SetToolTip($control, "$($m.Label)`n$($m.Target)`n$cid · $($m.ActionType)")
+    $detail = "$($m.Label)`n$($m.Target)`n$cid · $($m.ActionType)"
+    if ($cid.StartsWith('Knob_')) {
+        $feedback = Get-KnobFeedback $cid $chkPickupMode.Checked $chkEditOnly.Checked
+        $detail += "`n$feedback (CW = clockwise; CCW = counterclockwise)"
+        $control.AccessibleDescription = $detail
+    }
+    $toolTips.SetToolTip($control, $detail)
 }
 
 function Invalidate-ApcControl([string]$cid) {
@@ -1475,6 +1508,7 @@ function Invalidate-ApcControl([string]$cid) {
         return
     }
     if ($script:ControlButtons.ContainsKey($cid)) {
+        if ($cid.StartsWith('Knob_')) { Update-ControlDescription $cid }
         $btn = $script:ControlButtons[$cid]
         if ($cid.StartsWith('Trans_')) {
             $m = if ($script:ProfileMap.ContainsKey($cid)) { $script:ProfileMap[$cid] } else { $null }
@@ -1663,8 +1697,7 @@ $btnSave.Add_Click({
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
     $null = Update-PadVelocitiesCache
     if ($cid.StartsWith('Knob_')) {
-        $pct = Get-CurrentMappingVolumePct -Mapping $mapping
-        if ($null -ne $pct) { $script:KnobValues[$cid] = [int]$pct }
+        Update-ObservedControls
         $script:KnobPickedUp[$cid] = $false
         $script:KnobLastPhys[$cid] = -1
     }
@@ -1687,11 +1720,12 @@ $btnTest.Add_Click({
         if ($cid.StartsWith('Knob_')) {
             $res = Set-AudioVolumeByMapping -Mapping $m -MidiValue 64
             # A draft may target a different device; do not mislabel the saved knob's value.
-            if (-not $script:Drafts.ContainsKey($cid)) { $script:KnobValues[$cid] = 50 }
+            if (-not $script:Drafts.ContainsKey($cid)) { $script:KnobPickedUp[$cid] = $false }
         } else { $res = Invoke-ApcAction -Mapping $m }
         $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
         $script:BtSnapshot = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
         Update-CachedTelemetrySummaries
+        Update-ObservedControls
         Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
         Update-SurfaceButtonsVisuals
         Set-StatusBanner "[TEST $cid — not saved] $res"
@@ -1703,8 +1737,7 @@ $btnZeroKnob.Add_Click({
     if (-not $script:ProfileMap.ContainsKey($cid)) { return }
     $m = $script:ProfileMap[$cid]
     if ($cid.StartsWith('Knob_')) {
-        $script:KnobValues[$cid]   = 0
-        $script:KnobPickedUp[$cid] = $true
+        $script:KnobPickedUp[$cid] = $false
         $msg = Set-AudioVolumeByMapping -Mapping $m -MidiValue 0 -AutoMuteAtZero
     } else {
         $ep = Resolve-AudioEndpoint -MatchPattern $m.Target -UseCache
@@ -1718,6 +1751,7 @@ $btnZeroKnob.Add_Click({
     }
     $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
     Update-CachedTelemetrySummaries
+    Update-ObservedControls
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
     Update-SurfaceButtonsVisuals
     Set-StatusBanner "[ZERO OUT] $cid -> $msg"
@@ -1747,11 +1781,7 @@ $btnRefresh.Add_Click({
     $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
     $script:BtSnapshot    = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
     Update-CachedTelemetrySummaries
-    foreach ($cc in 48..55) {
-        $kId = "Knob_$cc"
-        $cur = Get-CurrentMappingVolumePct -Mapping $script:ProfileMap[$kId]
-        if ($null -ne $cur) { $script:KnobValues[$kId] = $cur }
-    }
+    Update-ObservedControls
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot -Force
     Update-SurfaceButtonsVisuals
     $headerPanel.Invalidate()
@@ -1773,6 +1803,7 @@ $btnReset.Add_Click({
     Clear-AudioEndpointCache
     $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
     Update-CachedTelemetrySummaries
+    Update-ObservedControls
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot -Force
     Update-SurfaceButtonsVisuals
     Select-ApcControl $script:SelectedId
@@ -1821,6 +1852,7 @@ $miBalance.Add_Click({
     $null = Invoke-ApcAction -Mapping ([pscustomobject]@{ ActionType = 'BalanceAll'; Target = '' })
     $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
     Update-CachedTelemetrySummaries
+    Update-ObservedControls
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
     Update-SurfaceButtonsVisuals
     Set-StatusBanner 'Balanced all workstation outputs & normalized microphones to 95%.'
@@ -1915,6 +1947,7 @@ $midiTimer.Add_Tick({
                         $res = Invoke-ApcAction -Mapping $m
                         $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
                         Update-CachedTelemetrySummaries
+                        Update-ObservedControls
                         if ($m.ActionType -eq 'BluetoothConnect') {
                             $script:BtSnapshot = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
                         }
@@ -1931,6 +1964,7 @@ $midiTimer.Add_Tick({
         }
 
         $knobToSelect = $null
+        $knobsToRedraw = [Collections.Generic.List[string]]::new()
         foreach ($ccKey in $latestCc.Keys) {
             $ccEv = $latestCc[$ccKey]
             $cid = "Knob_$ccKey"
@@ -1946,7 +1980,13 @@ $midiTimer.Add_Tick({
 
             if (-not $chkEditOnly.Checked -and $script:ProfileMap.ContainsKey($cid)) {
                 $m = $script:ProfileMap[$cid]
-                if ($chkPickupMode.Checked -and -not $script:KnobPickedUp[$cid]) {
+                $state = $script:KnobStates[$cid]
+                if (-not $state.Known -and $state.Status -ne 'No readback') {
+                    $lastBanner = "[$($m.Label)] $($state.Status); waiting for audio endpoint."
+                    $knobsToRedraw.Add($cid)
+                    continue
+                }
+                if ($state.Known -and $chkPickupMode.Checked -and -not $script:KnobPickedUp[$cid]) {
                     $targetPct = $script:KnobValues[$cid]
                     $crossed = ($prevPhys -ge 0) -and (($prevPhys -le $targetPct -and $physPct -ge $targetPct) -or ($prevPhys -ge $targetPct -and $physPct -le $targetPct))
                     if ([math]::Abs($physPct - $targetPct) -le 5 -or $crossed -or $physPct -eq 0) {
@@ -1954,19 +1994,19 @@ $midiTimer.Add_Tick({
                     } else {
                         $dir = if ($physPct -lt $targetPct) { 'Turn CW ->' } else { '<- Turn CCW' }
                         $lastBanner = "Pickup [$($m.Label)]: Physical=$physPct%, Target=$targetPct% ($dir to catch)"
-                        Invalidate-ApcControl $cid
+                        $knobsToRedraw.Add($cid)
                         continue
                     }
                 }
-                $oldVal = $script:KnobValues[$cid]
                 $script:KnobValues[$cid] = $physPct
                 $res = Set-AudioVolumeByMapping -Mapping $m -MidiValue $ccEv.Data2 -AutoMuteAtZero
+                Set-KnobCommand $cid $physPct
                 $lastBanner = "MIDI Ch1 CC $ccKey = $($ccEv.Data2) [$($m.Label)] -> $res"
-                if ($oldVal -ne $physPct) {
-                    Invalidate-ApcControl $cid
-                }
-            }
+                $knobsToRedraw.Add($cid)
+            } else { $knobsToRedraw.Add($cid) }
         }
+
+        foreach ($changedId in $knobsToRedraw) { Invalidate-ApcControl $changedId }
 
         # Apply every queued knob's volume before updating the inspector once.
         # Keep selection outside the loop so pickup/edit-only still allow MIDI Learn.
@@ -1993,30 +2033,52 @@ $syncTimer.Add_Tick({
         if (([Environment]::TickCount64 - $script:LastKnobTurnTick) -lt 800) {
             return
         }
-        if (-not [GoodCube.ApcDeck.NativeBridge]::IsOpen) {
+        $reconnected = $false
+        if (-not $OfflinePreview -and -not [GoodCube.ApcDeck.NativeBridge]::IsOpen) {
             $res = [GoodCube.ApcDeck.NativeBridge]::OpenDevice('APC Key 25')
             if ($res -eq 'OK') {
+                $reconnected = $true
                 Clear-AudioEndpointCache
-                $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
-                Update-CachedTelemetrySummaries
-                Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot -Force
-                Update-SurfaceButtonsVisuals
-                $headerPanel.Invalidate()
                 Set-StatusBanner 'Reconnected Akai APC Key 25 and synced LEDs.'
             }
-            return
         }
         $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
         Update-CachedTelemetrySummaries
-        Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
+        Update-ObservedControls
+        Set-StatusBanner
+        Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot -Force:$reconnected
         if ($form.Visible) {
             $changedPads = @(Update-PadVelocitiesCache)
-            foreach ($pId in $changedPads) {
-                Invalidate-ApcControl $pId
+            foreach ($changedPadId in $changedPads) {
+                Invalidate-ApcControl $changedPadId
             }
         }
-    } catch { }
+    } catch {
+        $script:CachedSpeakerSummary = 'Unavailable (refresh failed)'
+        $script:CachedMicSummary = 'Unavailable (refresh failed)'
+        foreach ($cc in 48..55) {
+            $cid = "Knob_$cc"
+            $state = $script:KnobStates[$cid]
+            if ($state -and $state.Known) {
+                $state.Known = $false
+                $state.Pending = $false
+                $state.Status = 'Unavailable'
+                $script:KnobPickedUp[$cid] = $false
+                Invalidate-ApcControl $cid
+            }
+        }
+        Set-StatusBanner
+    }
 })
+
+$refreshKnobFeedback = {
+    foreach ($cc in 48..55) {
+        $script:KnobPickedUp["Knob_$cc"] = $false
+        Invalidate-ApcControl "Knob_$cc"
+    }
+}
+$chkPickupMode.Add_CheckedChanged($refreshKnobFeedback)
+$chkEditOnly.Add_CheckedChanged($refreshKnobFeedback)
 
 $form.Add_Load({
     Update-PianoKeybedGeometry

@@ -572,6 +572,9 @@ function Get-AudioEndpointsSnapshot {
         }
     }
     $script:SnapshotDevices = $devList.ToArray()
+    # Rebind aliases/defaults against the fresh snapshot, not a previously active device.
+    $script:EndpointCache.Clear()
+    $script:NegativeEndpointCache.Clear()
     return $items.ToArray()
 }
 
@@ -1031,13 +1034,13 @@ function Get-PadLedVelocity {
             return $(if ($offColor -ne 'Auto') { Convert-ColorNameToApcVelocity $offColor 5 } else { 5 })
         }
         'MuteToggle' {
-            $match = if ($Mapping.Target -eq '@DefaultCapture') {
+            $match = @(if ($Mapping.Target -eq '@DefaultCapture') {
                 @($AudioSnapshot | Where-Object { $_.Flow -eq 'Capture' -and $_.IsDefault } | Select-Object -First 1)
             } elseif ($Mapping.Target -eq '@DefaultRender') {
                 @($AudioSnapshot | Where-Object { $_.Flow -eq 'Render' -and $_.IsDefault } | Select-Object -First 1)
             } else {
                 @($AudioSnapshot | Where-Object { $_.FriendlyName -match [regex]::Escape($Mapping.Target) -or $_.ID -eq $Mapping.Target } | Select-Object -First 1)
-            }
+            })
             if (-not $match.Count -or $match[0].State -ne 'Active') { return 0 }
             if ($match[0].Muted) {
                 return $(if ($offColor -ne 'Auto') { Convert-ColorNameToApcVelocity $offColor 3 } else { 3 })

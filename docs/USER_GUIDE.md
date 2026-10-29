@@ -92,6 +92,15 @@ The inspector shows the selected control, with **Follow hardware selection**, **
 
 ---
 
+### Live volume and pickup feedback
+
+- Knobs and the speaker/microphone footer reconcile with Windows on the existing **5-second refresh**, including external volume/mute changes and default-device switches. Refresh waits while a knob was turned in the last 800 ms; F5 requests an immediate refresh.
+- A changed volume, mute state, or endpoint re-arms pickup. Each tile shows **Awaiting turn**, **CW to 42%**, **CCW to 42%**, or **In sync**. CW means clockwise; CCW means counterclockwise. The zero-stop safety bypass remains available for reachable endpoints.
+- **Updating...** identifies a commanded level awaiting readback. **Muted**, **Disconnected**, **Disabled**, and **Unavailable** are distinct from zero volume. Unknown levels show a dash instead of an invented percentage. Refresh failure marks the state unavailable until a successful refresh.
+- At compact sizes, tiles shorten feedback and omit the dial artwork to keep numbers and guidance readable. Hover for the full status, saved label, and target; hardware positions do not change.
+- Application-volume mappings have no session-volume observer yet. They show **No readback** (compact: **Unverified**) and use direct writes; endpoint pickup cannot validate an app session level.
+- The footer refreshes telemetry while retaining your last action message. Bluetooth pad state is refreshed from the existing audio-endpoint evidence; it is not a general Bluetooth radio connection probe.
+
 ## 5. Knob Zero-Out, Sub-Millisecond Responsiveness & Soft-Takeover
 
 APC-DECK includes dedicated signal conditioning and caching for the 8 hardware potentiometers (`K1`–`K8`):

@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'ApcDeck.psm1') -Force -DisableNameChecking
@@ -90,6 +90,9 @@ if ((Get-PadLedVelocity -Mapping $customStandby -AudioSnapshot $fakeAudio -BtSna
 # Verify audio dispatch precedes inspector work without changing real volumes.
 & pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Test-ApcKnobDispatch.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Knob dispatch regression test failed.' }
+
+& pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Test-ApcLiveState.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Live state cache regression test failed.' }
 
 # Exercise real inspector controls in an isolated process with recording sinks.
 & pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Test-ApcInspector.ps1')
