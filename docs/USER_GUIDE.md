@@ -83,6 +83,7 @@ The inspector keeps the selected control and saved status at the top. **Follow h
 - Drafts are held in this running app session, not written to a separate draft file. Apply before quitting or restarting if you want to retain them across process exits.
 - **Edit mode** pauses physical MIDI actions and on-screen knob-wheel volume changes. It does not disable explicit Test or the **Mute saved device (0%)** command.
 - **More actions…** contains Mute saved device, Clear mapping in draft, Refresh devices & LEDs (F5), Keep running in tray, and Reset entire profile. Clear is reversible until Apply. Reset still asks for confirmation and discards all drafts.
+- **Refresh devices & LEDs (F5)** discovers device names in the background while you keep editing or using the controller. Only one refresh runs at a time. Completion reads current levels, updates device choices without replacing typed targets or drafts, and synchronizes LEDs. Reconciliation waits until you stop turning knobs briefly. A failed or timed-out refresh shows a retry message; press F5 again.
 
 ### Keyboard navigation and focus
 

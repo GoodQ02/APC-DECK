@@ -528,6 +528,9 @@ function Initialize-BluetoothHelper {
 }
 
 function Get-AudioEndpointsSnapshot {
+    param([hashtable]$FriendlyNames = @{})
+    # Only plain strings cross from background discovery; COM endpoints stay on this thread.
+    foreach ($id in $FriendlyNames.Keys) { $script:FriendlyNameCache[$id] = [string]$FriendlyNames[$id] }
     $enum = Get-SharedEnumerator
     $defRenderDev  = try { $enum.GetDefaultAudioEndpoint([NAudio.CoreAudioApi.DataFlow]::Render, [NAudio.CoreAudioApi.Role]::Multimedia) } catch { $null }
     $defCaptureDev = try { $enum.GetDefaultAudioEndpoint([NAudio.CoreAudioApi.DataFlow]::Capture, [NAudio.CoreAudioApi.Role]::Communications) } catch { $null }

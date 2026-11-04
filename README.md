@@ -14,8 +14,8 @@ Native Windows visual controller, hardware LED synchronizer, and Stream Deck–s
 | :--- | :--- |
 | **[README.md](README.md)** | Quick start, launching, default 90-control workstation layout, performance metrics, and verification |
 | **[AGENTS.md](AGENTS.md)** | Authoritative repository-root instructions and architectural invariants for Codex / AI coding agents |
-| **[docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md)** | Complete engineering handoff & current-state reference across all 5 passes (resolved issues, caching architecture, desktop IPC) |
-| **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** | Step-by-step operational guide: 1:1 hardware twin navigation, MIDI Learn, 1-click pad/key color swatches, knob zero-out & soft-takeover pickup |
+| **[docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md)** | Engineering handoff, measured fluidity results, accessibility qualification, runtime evidence, and preserved invariants |
+| **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** | Hardware navigation, retained drafts, Apply/Revert/Test, background Refresh, keyboard access, text sizing, contrast themes, and Speechify reading |
 | **[docs/HARDWARE_MIDI_SPEC.md](docs/HARDWARE_MIDI_SPEC.md)** | Complete Akai APC Key 25 (MK1) MIDI IN/OUT protocol, canonical `ControlId` coordinates, hardware LED velocity table, and WinMM lifecycle |
 | **[docs/REA_STREAMDECK_ANALYSIS.md](docs/REA_STREAMDECK_ANALYSIS.md)** | Reverse-engineering dossier (REA Evidence IDs, SHA-256 digests, CoreAudio `IPolicyConfig` COM vtable, WinRT RFCOMM `0x111E` Bluetooth wake-up, and CoreAudio caching) |
 
@@ -54,6 +54,10 @@ Native Windows visual controller, hardware LED synchronizer, and Stream Deck–s
 
 ## Key Capabilities & Runtime Performance
 
+- **Responsive Mapping and Device Refresh**:
+  - Each control retains its own draft; **Apply / Revert / Test** remain visible. Target choices update without rebuilding unchanged dropdowns or discarding typed targets.
+  - **F5 / More actions → Refresh devices & LEDs** performs cold device-name discovery in the background while editing and controller input continue. One refresh runs at a time; completion reads current audio state, updates choices, and synchronizes physical LEDs. Failures show a retry message.
+  - In the November 4 isolated measurements, repeated dropdown population fell from **19.27 to 0.69 ms**, and device-knob selection/repaint from **41.87 to 21.47 ms**. Refresh started in **8.57 ms median**; discovery took **1.37 seconds elapsed** with the UI message pump running, followed by **31.73 ms median** completion/repaint (**142.35 ms** first-run maximum). These are workstation observations, not physical MIDI-to-audio latency guarantees. [Method and limits](docs/AGENT_HANDOFF.md#14-measured-fluidity--implemented-2026-11-04).
 - **60 Hz Sub-Millisecond Rotary Knobs (`K1`–`K8`) with Clean `0%` Zero-Out**:
   - Uses a 4-tier in-memory CoreAudio `MMDevice` & `FriendlyName` cache (`$script:EndpointCache`, `$script:SnapshotDevices`, `$script:FriendlyNameCache`, `$script:NegativeEndpointCache`) plus single-control GDI+ invalidation (`Invalidate-ApcControl`) so turning any knob adjusts volume and repaints in **`0.15 ms – 1.0 ms`**, with **`0.0 ms/sec` idle CPU usage**.
   - **Deadzone Zero-Out (`CC <= 1` → `0%` & Auto-Mute)**: Turning a knob fully counter-clockwise snaps cleanly to `0%` and mutes the device so there is zero audio bleed; turning it up (`CC >= 2`) automatically unmutes. Turning fully clockwise (`CC >= 126`) snaps cleanly to `100%`.
@@ -64,7 +68,7 @@ Native Windows visual controller, hardware LED synchronizer, and Stream Deck–s
   - Use the **1-Click Instant Hardware Pad / Key Color Swatches** (`Green`, `Amber`, `Red`, `Blink G`, `Blink A`, `Blink R`, `Off`) to recolor any physical pad or on-screen piano key (`C3`–`C5`) immediately.
   - **Differential USB MIDI LED Sync**: `Sync-ApcHardwareLeds` caches the last velocity sent per note (`$script:LastSentLedVel`) and only transmits `midiOutShortMsg` when a pad's state actually changes.
 - **Stream Deck–Style MIDI Learn & Right-Click Instant Test**:
-  - Touch any knob, pad, scene/track button, transport button, or piano key on the physical APC Key 25 to highlight it in cyan and load its mapping in the right-hand Inspector in `< 13 ms`.
+  - Touch any knob, pad, scene/track button, transport button, or piano key on the physical APC Key 25 to highlight it in cyan and load its mapping in the right-hand Inspector. Queued knob volume updates run before one coalesced inspector selection.
   - **Right-click** any pad, button, knob, or piano key directly on the UI canvas to select and test its bound action immediately without touching the hardware.
   - Check **Edit-Only Mode (Mute actions while mapping)** to press pads/keys or turn knobs freely while assigning them without firing hotkeys or changing volumes.
 

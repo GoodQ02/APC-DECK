@@ -1445,62 +1445,54 @@ function Validate-InspectorInput {
     }
 }
 
+function Set-TargetChoices($Combo, [object[]]$Choices) {
+    $same = $Combo.Items.Count -eq $Choices.Count
+    if ($same) {
+        for ($i=0; $i -lt $Choices.Count; $i++) {
+            if ([string]$Combo.Items[$i] -cne [string]$Choices[$i]) { $same=$false; break }
+        }
+    }
+    if ($same) { return }
+    $text=$Combo.Text; $start=$Combo.SelectionStart; $length=$Combo.SelectionLength
+    $Combo.BeginUpdate()
+    try {
+        $Combo.Items.Clear()
+        if ($Choices.Count) { $Combo.Items.AddRange($Choices) }
+        $Combo.Text=$text
+        $Combo.SelectionStart=[math]::Min($start,$Combo.Text.Length)
+        $Combo.SelectionLength=[math]::Min($length,$Combo.Text.Length-$Combo.SelectionStart)
+    } finally { $Combo.EndUpdate() }
+}
+
 function Populate-TargetDropdowns([string]$actionType) {
     $wasSuppressed = $script:SuppressInspectorEvents
     $script:SuppressInspectorEvents = $true
     try {
-        $cur1 = $cmbTarget1.Text
-        $cur2 = $cmbTarget2.Text
-        $cmbTarget1.BeginUpdate()
-        $cmbTarget2.BeginUpdate()
-        $cmbTarget1.Items.Clear()
-        $cmbTarget2.Items.Clear()
-
-        $audioNames = @('@DefaultRender', '@DefaultCapture') + @($script:AudioSnapshot | ForEach-Object { $_.FriendlyName } | Select-Object -Unique)
-        foreach ($n in $audioNames) { [void]$cmbTarget2.Items.Add($n) }
-
-        switch ($actionType) {
-            { $_ -in @('VolumeDevice','SetDefaultDevice','SwapDevices','MuteToggle','EndpointEnableToggle') } {
-                foreach ($n in $audioNames) { [void]$cmbTarget1.Items.Add($n) }
-            }
-            'VolumeMasterOut'  { [void]$cmbTarget1.Items.Add('@DefaultRender') }
-            'VolumeDefaultMic' { [void]$cmbTarget1.Items.Add('@DefaultCapture') }
-            'VolumeApp' {
-                foreach ($app in @('chrome','msedge','Spotify','Speechify','Discord','vlc')) { [void]$cmbTarget1.Items.Add($app) }
-            }
-            'BluetoothConnect' {
-                foreach ($b in $script:BtSnapshot) { [void]$cmbTarget1.Items.Add($b.Name) }
-                foreach ($fallback in @('RB Meta 00YS','RB Meta 01JY','Joes iPhone')) {
-                    if (-not $cmbTarget1.Items.Contains($fallback)) { [void]$cmbTarget1.Items.Add($fallback) }
-                }
-            }
-            'Hotkey' {
-                foreach ($hk in @('Alt+Q','Alt+W','Alt+S','Alt+F','Alt+A','Win+H','Ctrl+Shift+M','Ctrl+C','Ctrl+V','Ctrl+Z','F13','F14','F15')) {
-                    [void]$cmbTarget1.Items.Add($hk)
-                }
-            }
-            'MediaKey' {
-                foreach ($mk in @('PlayPause','NextTrack','PrevTrack','Stop','VolumeMute','VolumeUp','VolumeDown')) {
-                    [void]$cmbTarget1.Items.Add($mk)
-                }
-            }
-            'SystemCommand' {
-                foreach ($sc in @('sound-cpl','recording-cpl','app-mixer','sound-settings','bt-settings','notepad.exe','calc.exe')) {
-                    [void]$cmbTarget1.Items.Add($sc)
-                }
-            }
+        $audioNames = [Collections.Generic.List[object]]::new()
+        $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($name in @('@DefaultRender','@DefaultCapture') + @(foreach ($endpoint in $script:AudioSnapshot) { $endpoint.FriendlyName })) {
+            if ($seen.Add($name)) { $audioNames.Add($name) }
         }
-        $cmbTarget1.Text = $cur1
-        $cmbTarget2.Text = $cur2
+        $choices = @(switch ($actionType) {
+            { $_ -in @('VolumeDevice','SetDefaultDevice','SwapDevices','MuteToggle','EndpointEnableToggle') } { $audioNames.ToArray() }
+            'VolumeMasterOut'  { '@DefaultRender' }
+            'VolumeDefaultMic' { '@DefaultCapture' }
+            'VolumeApp' { 'chrome','msedge','Spotify','Speechify','Discord','vlc' }
+            'BluetoothConnect' {
+                $btSeen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                foreach ($name in @($script:BtSnapshot | ForEach-Object Name) + @('RB Meta 00YS','RB Meta 01JY','Joes iPhone')) {
+                    if ($btSeen.Add($name)) { $name }
+                }
+            }
+            'Hotkey' { 'Alt+Q','Alt+W','Alt+S','Alt+F','Alt+A','Win+H','Ctrl+Shift+M','Ctrl+C','Ctrl+V','Ctrl+Z','F13','F14','F15' }
+            'MediaKey' { 'PlayPause','NextTrack','PrevTrack','Stop','VolumeMute','VolumeUp','VolumeDown' }
+            'SystemCommand' { 'sound-cpl','recording-cpl','app-mixer','sound-settings','bt-settings','notepad.exe','calc.exe' }
+        })
+        Set-TargetChoices $cmbTarget1 $choices
+        Set-TargetChoices $cmbTarget2 $audioNames.ToArray()
         $cmbTarget2.Enabled = ($actionType -eq 'SwapDevices')
-        $cmbTarget1.EndUpdate()
-        $cmbTarget2.EndUpdate()
-    } finally {
-        $script:SuppressInspectorEvents = $wasSuppressed
-    }
-    if (-not $script:SuppressInspectorEvents) {
-        Validate-InspectorInput
-    }
+    } finally { $script:SuppressInspectorEvents = $wasSuppressed }
+    if (-not $script:SuppressInspectorEvents) { Validate-InspectorInput }
 }
 
 function Get-UiColorForColorName([string]$colorName, [Drawing.Color]$fallback) {
@@ -1678,10 +1670,8 @@ function Select-ApcControl([string]$cid) {
         $actStr = if ($cmbAction.Items.Contains([string]$m.ActionType)) { [string]$m.ActionType } else { 'None' }
         if ([string]$cmbAction.SelectedItem -ne $actStr) {
             $cmbAction.SelectedItem = $actStr
-            Populate-TargetDropdowns $actStr
-        } elseif ($cmbTarget1.Items.Count -eq 0) {
-            Populate-TargetDropdowns $actStr
         }
+        Populate-TargetDropdowns $actStr
         $cmbTarget1.Text        = [string]$m.Target
         $cmbTarget2.Text        = [string]$m.SecondaryTarget
         $cmbTarget2.Enabled     = ($actStr -eq 'SwapDevices')
@@ -1831,20 +1821,7 @@ $btnClear.Add_Click({
     Set-StatusBanner 'Mapping cleared in draft. Apply to save, or Revert to keep the saved mapping.'
 })
 
-$btnRefresh.Add_Click({
-    Clear-AudioEndpointCache
-    if (-not [GoodCube.ApcDeck.NativeBridge]::IsOpen) {
-        $null = [GoodCube.ApcDeck.NativeBridge]::OpenDevice('APC Key 25')
-    }
-    $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
-    $script:BtSnapshot    = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
-    Update-CachedTelemetrySummaries
-    Update-ObservedControls
-    Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot -Force
-    Update-SurfaceButtonsVisuals
-    $headerPanel.Invalidate()
-    Set-StatusBanner 'Refreshed audio/Bluetooth endpoints and synced physical APC Key 25 LEDs.'
-})
+$btnRefresh.Add_Click({ Start-DeviceRefresh })
 
 $btnTray.Add_Click({
     $form.Hide()
@@ -2088,6 +2065,7 @@ $syncTimer = [Windows.Forms.Timer]::new()
 $syncTimer.Interval = 5000
 $syncTimer.Add_Tick({
     try {
+        if ($script:DeviceRefreshJob) { return }
         if (([Environment]::TickCount64 - $script:LastKnobTurnTick) -lt 800) {
             return
         }
@@ -2150,6 +2128,7 @@ $chkEditOnly.Add_CheckedChanged($refreshKnobFeedback)
 
 . (Join-Path $PSScriptRoot 'Accessibility.ps1')
 . (Join-Path $PSScriptRoot 'ContrastTheme.ps1')
+. (Join-Path $PSScriptRoot 'DeviceRefresh.ps1')
 
 $form.Add_Load({
     Update-PianoKeybedGeometry
@@ -2170,6 +2149,7 @@ $form.Add_Load({
 try {
     [Windows.Forms.Application]::Run($form)
 } finally {
+    try { Stop-DeviceRefresh; $deviceRefreshTimer.Dispose() } catch { }
     try { $instanceMutex.ReleaseMutex() } catch { }
     try { $instanceMutex.Dispose() } catch { }
     try { $midiTimer.Stop(); $midiTimer.Dispose() } catch { }

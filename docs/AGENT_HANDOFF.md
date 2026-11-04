@@ -12,6 +12,8 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 
 ## 1. Executive Summary & Live State
 
+**Measured fluidity release (2026-11-04):** implemented on published `3d23782`, with baseline/after measurements and full regression verification before launch. Unchanged target choices no longer rebuild native dropdowns. Explicit F5 discovery runs in an owned read-only process and returns only name strings; the UI retains its own CoreAudio objects and reads current levels at completion. Apply persistence and MIDI dispatch ordering are preserved. See Section 14. After verification, the user authorized documentation updates, commit, and push to origin/main; implementation, tests, and documentation belong to this release.
+
 **Accessibility release (2026-11-04):** the user authorized committing and pushing the tested accessibility pass to origin/main. Contextual accessible fields, debounced action/error announcements, cached F8 status, and full Windows system-color presentation are implemented. Actual dark and Desert light contrast transitions passed; Speechify selected-text ingestion was verified and is the user's preferred reading workflow. Full Narrator spoken qualification remains partial. See Section 13. Runtime IDs and settings below are dated test evidence, not a current process inventory.
 
 **DPI and larger-text usability pass (2026-10-29):** implemented locally on published contrast commit `fe972d1`, tested before restart, and verified visible/online as PID `18328`. Inspector typography follows Windows text size with a session override, fields/toggles scroll, actions remain fixed, and hardware text adapts to available space using measured font metrics. Hardware geometry, physical LED engine, and MIDI dispatch remain intact. See Section 12. The user has authorized committing and pushing this tested pass to origin/main.
@@ -390,3 +392,36 @@ The full Narrator journey is **not complete**. Existing automation-provider test
 - Full `Test-ApcDeck.ps1` passed again: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=18, BluetoothPaired=4, KnobSweepMs=309.95, UI=Visible**. Offline UI sweep was 117.03 ms. All inspector, live-state, keyboard/piano, contrast, text-layout, and accessibility markers passed. `git diff --check` passed. These sweep figures measure startup selection/redraw, not physical MIDI-to-audio latency.
 - The current real profile differs from the October test baseline and was preserved: SHA-256 **02805CD35F251798CCD8FC37A45E264A4D6AA73DC6D16F70015DFCE66C3B8781** before and after testing. No production restart was performed for this commit/push request.
 - Recommended next audit work: measured fluidity (P2-10). Profile selection, Apply, and Refresh separately; optimize only demonstrated delays while preserving cached audio access, MIDI dispatch ordering, hardware layout, and physical LED behavior. Actual mixed-DPI monitor transitions/small work areas remain a separate qualification gap; app-session volume readback remains optional. Full Narrator spoken qualification is deferred per the user's Speechify preference, and Speechify screenshot OCR still needs its own witness.
+
+## 14. Measured Fluidity — Implemented 2026-11-04
+
+### Measurements and scope
+
+Profiled real WinForms selection/Apply handlers in an isolated offline window, with real read-only audio discovery, the actual profile serializer redirected to a disposable file, and no-op MIDI/LED/audio-action sinks. Compared five samples per operation; separate async discovery used three cold-name-cache runs. Evidence/scripts: `C:\Users\jdben\Documents\APC-DECK UI Audit 2026-11-04\fluidity`. These are handler/paint timings, not physical input-to-audio latency.
+
+| Operation | Baseline median | Final median |
+|---|---:|---:|
+| Repeated target dropdown population | 19.27 ms | 0.69 ms |
+| Select device-volume knob K2, including repaint | 41.87 ms | 21.47 ms |
+| Select master-volume knob K1, including repaint | 28.46 ms | 17.34 ms |
+| Select Pad_26, including repaint | 27.72 ms | 17.35 ms |
+| Apply label through temporary real profile save | 39.91 ms | 45.47 ms |
+
+Apply showed no demonstrated pause requiring a persistence change; its original atomic temporary-file/backup behavior remains. The small timing variation is not claimed as an improvement. Other selection measurements and maxima are retained in the JSON evidence.
+
+Cold name/device discovery originally occupied the calling thread for **566.33 ms**; warm discovery was about 30 ms. The new explicit Refresh start returns in **8.57 ms median / 17.68 ms max**. Real cold discovery takes **1366.57 ms median wall time**, during which the UI message pump continues running. Completion plus repaint is **31.73 ms median / 142.35 ms first-run max**; its fresh owner-thread audio read is **16.48 ms median / 46.08 ms max**. This trades additional elapsed discovery time for responsiveness; it does not make discovery itself faster.
+
+### Implementation and preservation
+
+- `Set-TargetChoices` compares choice sequences before changing native ComboBox items, uses one AddRange when needed, and preserves typed targets/caret under suppressed edit events. Selection checks current snapshot choices even when the action type is unchanged. Empty/changed snapshots remain supported.
+- `Read-DeviceNames.ps1` imports the existing engine in a disposable hidden process and reads endpoint names without opening MIDI, loading mappings, saving profiles, or executing actions. `DeviceRefresh.ps1` owns one process/result file, polls completion on a 50 ms UI timer, exposes progress/error/retry, times out discovery after 15 seconds, and cleans up on completion/failure/shutdown. Periodic sync yields while explicit discovery is pending; completion honors the existing 800 ms knob-turn grace.
+- Only a JSON dictionary of endpoint ID/name strings crosses the process boundary. `Get-AudioEndpointsSnapshot -FriendlyNames` seeds its existing name cache, then performs the existing fresh observation/cache-rebinding logic on the UI thread. Worker volume/default observations are never adopted over newer user commands. MIDI reconnection and forced physical LED synchronization remain on the original owner thread; only changed pad/knob presentations repaint.
+- No hardware layout, physical LED solver/transmitter, volume-write path, polling interval, launcher, or WinMM shutdown changes. The entire MIDI dispatch block matches `3d23782` after newline normalization. `ApcDeck.psm1` changes only by the optional name-cache seed parameter and loop.
+- This pass targets explicit Refresh. Startup and ordinary periodic observations retain their existing design; an endpoint arriving after the worker snapshot can still require a fresh property lookup. No blanket claim of zero UI-thread work or full discovery isolation is made.
+
+### Verification and launch
+
+- `tests/FluidityCases.ps1` exercises unchanged choice/caret preservation, empty/changed snapshots, drafts and UI heartbeat during a slow worker, single-flight requests, periodic exclusion, owner-thread snapshot input, forced LED sync, active-knob grace, failure/invalid-result/timeout/retry, and worker/file cleanup. All side effects use recording/no-op sinks. Existing full accessibility/keyboard/piano/contrast/text-size/draft tests passed.
+- Full `Test-ApcDeck.ps1` passed before launch: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=18, BluetoothPaired=4, KnobSweepMs=283.45, UI=Visible**. Offline sweep: 110.8 ms. PowerShell parsing and `git diff --check` passed. No real profile/audio-action writes occurred during the isolated profiling and interaction tests.
+- APC-DECK was closed when this work began. After tests passed, launched the existing desktop shortcut. **PID 69272 / HWND 135962** is visible and reports **MIDI: ONLINE (IN + LED OUT)**, with Saved/no pending changes. A live F5 completed successfully and reported synchronized endpoints/LEDs; rendered inspection retained the hardware layout and fixed inspector actions. The current launch geometry is 2082×1204 at x679/y144; old October process IDs/geometry were not treated as live state.
+- Real profile SHA-256 remained **02805CD35F251798CCD8FC37A45E264A4D6AA73DC6D16F70015DFCE66C3B8781** after testing and launch. The user subsequently authorized publishing this pass to origin/main. Release preparation updated documentation only and retained the passing implementation/test evidence above; no additional app restart was needed. Remaining audit opportunities: actual mixed-DPI/small-work-area qualification, restrained interaction feedback, and optional app-session readback.
