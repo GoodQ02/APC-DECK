@@ -153,7 +153,7 @@ namespace GoodCube.ApcDeck {
     public class InspectorButton : Button {
         protected override void OnPaint(PaintEventArgs e) {
             base.OnPaint(e);
-            if (!Enabled) {
+            if (!Enabled && !DeckTheme.HighContrast) {
                 using (var brush = new System.Drawing.SolidBrush(BackColor)) e.Graphics.FillRectangle(brush, ClientRectangle);
                 ControlPaint.DrawBorder(e.Graphics, ClientRectangle, System.Drawing.Color.FromArgb(71,85,105), ButtonBorderStyle.Solid);
                 var textSize = e.Graphics.MeasureString(Text, Font);
@@ -206,6 +206,7 @@ $script:KnobLastPhys            = @{}
 $script:KnobStates              = @{}
 $script:LastStatusEvent         = ''
 . (Join-Path $PSScriptRoot 'KnobState.ps1')
+$script:UiHighContrast          = $false
 $script:PadVelocities           = @{}
 $script:PadPresentations        = @{}
 . (Join-Path $PSScriptRoot 'PadPresentation.ps1')
@@ -413,6 +414,7 @@ $rootLayout.Controls.Add($headerPanel, 0, 0)
 $headerPanel.Add_Paint({
     param($sender, $e)
     try {
+        if ($script:UiHighContrast) { Paint-ContrastSurface $sender $e 'Header'; return }
         $g = $e.Graphics
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
@@ -570,6 +572,7 @@ $padPaintHandler = {
 $roundBtnPaintHandler = {
     param($sender, $e)
     try {
+        if ($script:UiHighContrast) { Paint-ContrastSurface $sender $e 'Round'; return }
         $g = $e.Graphics
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
@@ -713,6 +716,7 @@ $knobsGroup.Controls.Add($knobsGrid)
 $knobPaintHandler = {
     param($sender, $e)
     try {
+        if ($script:UiHighContrast) { Paint-ContrastSurface $sender $e 'Knob'; return }
         $g = $e.Graphics
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
@@ -1005,6 +1009,7 @@ function Get-PianoKeyAtPoint([int]$x, [int]$y) {
 $keybedCanvas.Add_Paint({
     param($sender, $e)
     try {
+        if ($script:UiHighContrast) { Paint-ContrastSurface $sender $e 'Piano'; return }
         $g = $e.Graphics
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
@@ -1378,6 +1383,7 @@ $statusBox.Font = [Drawing.Font]::new('Consolas', 9.2)
 $rootLayout.Controls.Add($statusBox, 0, 2)
 
 function Set-StatusBanner([string]$eventText) {
+    if ($eventText -match '^(Applied |Reverted |Could not save|Test failed|\[TEST)') { Queue-AccessibilityAnnouncement $eventText }
     if ($PSBoundParameters.ContainsKey('eventText')) { $script:LastStatusEvent = $eventText }
     $isOpen = [GoodCube.ApcDeck.NativeBridge]::IsOpen
     $midiState = if ($isOpen) { 'ONLINE (IN + LED OUT)' } else { 'OFFLINE' }
@@ -1435,7 +1441,7 @@ function Validate-InspectorInput {
         }
     } else {
         $lblValidation.Text = "Action: $act"
-        $lblValidation.ForeColor = [Drawing.Color]::FromArgb(148, 163, 184)
+        $lblValidation.ForeColor = if ($script:UiHighContrast) { [Drawing.SystemColors]::WindowText } else { [Drawing.Color]::FromArgb(148, 163, 184) }
     }
 }
 
@@ -1498,6 +1504,7 @@ function Populate-TargetDropdowns([string]$actionType) {
 }
 
 function Get-UiColorForColorName([string]$colorName, [Drawing.Color]$fallback) {
+    if ($script:UiHighContrast) { return [Drawing.SystemColors]::Window }
     switch ($colorName) {
         'Green'      { return $cGreenFill }
         'BlinkGreen' { return $cGreenBlink }
@@ -1556,9 +1563,9 @@ function Invalidate-ApcControl([string]$cid) {
             $sel = ($cid -eq $script:SelectedId)
             $active = ($m -and $m.ActionType -ne 'None')
             $btn.BackColor = if ($active) { Get-UiColorForColorName $m.LedColor ([Drawing.Color]::FromArgb(30, 58, 95)) } else { $cPadUnmapped }
-            $btn.ForeColor = Get-ReadableInk $btn.BackColor
+            $btn.ForeColor = if ($script:UiHighContrast) { [Drawing.SystemColors]::WindowText } else { Get-ReadableInk $btn.BackColor }
             $btn.Text = if ($m -and $m.Label) { Format-CompactText $m.Label 16 } else { $cid }
-            $btn.FlatAppearance.BorderColor = if ($sel) { $cCyanSelect } else { [Drawing.Color]::FromArgb(71, 85, 105) }
+            $btn.FlatAppearance.BorderColor = if ($sel) { $cCyanSelect } elseif ($script:UiHighContrast) { [Drawing.SystemColors]::WindowText } else { [Drawing.Color]::FromArgb(71, 85, 105) }
             $btn.FlatAppearance.BorderSize  = if ($sel) { 2 } else { 1 }
         } else {
             $btn.Invalidate()
@@ -1612,6 +1619,7 @@ function Update-InspectorDraftState {
     $lblDraftState.Text = if ($dirty) { "Unsaved draft · $($script:Drafts.Count) retained" } elseif ($script:Drafts.Count) { "Saved · $($script:Drafts.Count) other drafts retained" } else { 'Saved · no pending changes' }
     $lblDraftState.ForeColor = if ($dirty) { $cAmberGlow } else { $cGreenGlow }
     if ($errorText) { $lblValidation.Text = $errorText; $lblValidation.ForeColor = $cAmberGlow }
+    Update-AccessibleInspectorState $errorText $dirty
 }
 
 function Save-InspectorDraft {
@@ -1643,6 +1651,10 @@ function Update-InspectorFields {
         default { 'Device' }
     }
     $lblLed.Text = if ($hasLed) { 'Active LED color' } else { 'Key / button color' }
+    $cmbTarget1.AccessibleName = $lblTarget1.Text
+    $cmbTarget2.AccessibleName = $lblTarget2.Text
+    $cmbLed.AccessibleName = $lblLed.Text
+    $cmbOffLed.AccessibleName = $lblOffLed.Text
     foreach ($ctrl in @($lblLed, $cmbLed, $swatchPanel)) { $ctrl.Visible = -not $isKnob }
     foreach ($ctrl in @($lblOffLed, $cmbOffLed)) { $ctrl.Visible = $hasLed }
     $btnZeroKnob.Enabled = $isKnob -or $action -in @('VolumeDevice','SetDefaultDevice','SwapDevices','MuteToggle','EndpointEnableToggle')
@@ -2136,10 +2148,14 @@ $refreshKnobFeedback = {
 $chkPickupMode.Add_CheckedChanged($refreshKnobFeedback)
 $chkEditOnly.Add_CheckedChanged($refreshKnobFeedback)
 
+. (Join-Path $PSScriptRoot 'Accessibility.ps1')
+. (Join-Path $PSScriptRoot 'ContrastTheme.ps1')
+
 $form.Add_Load({
     Update-PianoKeybedGeometry
     foreach ($cid in @($script:ProfileMap.Keys)) { Update-ControlDescription $cid }
     foreach ($cid in @('Trans_91','Trans_93','Trans_98')) { Invalidate-ApcControl $cid }
+    Set-ApcContrastTheme ([Windows.Forms.SystemInformation]::HighContrast)
     Set-ReadableTextScale (Get-WindowsTextScale)
     Resize-InspectorContent
     Select-ApcControl 'Pad_32'

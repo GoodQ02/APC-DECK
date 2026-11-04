@@ -1,5 +1,5 @@
 <!-- DOC_STATUS: AUTHORITATIVE -->
-<!-- HANDOFF_DATE: 2026-10-29 -->
+<!-- HANDOFF_DATE: 2026-11-04 -->
 
 # APC-DECK — Codex Agent Handoff & Current State Reference
 
@@ -11,6 +11,8 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 ---
 
 ## 1. Executive Summary & Live State
+
+**Accessibility release (2026-11-04):** the user authorized committing and pushing the tested accessibility pass to origin/main. Contextual accessible fields, debounced action/error announcements, cached F8 status, and full Windows system-color presentation are implemented. Actual dark and Desert light contrast transitions passed; Speechify selected-text ingestion was verified and is the user's preferred reading workflow. Full Narrator spoken qualification remains partial. See Section 13. Runtime IDs and settings below are dated test evidence, not a current process inventory.
 
 **DPI and larger-text usability pass (2026-10-29):** implemented locally on published contrast commit `fe972d1`, tested before restart, and verified visible/online as PID `18328`. Inspector typography follows Windows text size with a session override, fields/toggles scroll, actions remain fixed, and hardware text adapts to available space using measured font metrics. Hardware geometry, physical LED engine, and MIDI dispatch remain intact. See Section 12. The user has authorized committing and pushing this tested pass to origin/main.
 
@@ -347,3 +349,44 @@ The user authorized implementation and restart after testing, preserving hardwar
 - Windows TextScaleFactor remains **105**, and profile SHA-256 remains **D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4**. The app is left open with Pad_32 selected and no pending drafts.
 
 Remaining qualification: actual mixed-DPI monitor transitions and Windows display-mode changes, sub-minimum work areas, a full Narrator journey, and full OS high-contrast behavior. Existing desktop/DPI awareness was deliberately preserved. Compact hardware labels can still ellipsize; the inspector honors the full requested text size while hardware text is bounded by available space. App-session volume readback remains optional separate work.
+
+## 13. Accessibility Pass — Implemented, Partial Interactive Qualification (2026-10-29)
+
+User authorized the accessibility pass including Narrator/Windows high contrast and restart after testing, preserving layout, physical LEDs, and latency. Base: published `f4dd187`. On 2026-11-04, the user authorized committing and pushing this pass to origin/main, including implementation, tests, user guide, and handoff.
+
+### Delivered and tested
+
+- `Accessibility.ps1` exposes contextual target/color names, draft/validation descriptions, action availability, and debounced Windows automation notifications for edits, errors, Apply/Revert/Test outcomes. Background hardware events remain quiet. F8 and More actions → Read selected status report cached mapping/state, mute/pickup feedback, drafts, and validation; no speech engine, endpoint enumeration, or device action is introduced.
+- `ContrastTheme.ps1` uses system colors across the entire surface, native inspector, transport outlines, and custom focus indicators. Piano natural/sharp geometry and identities remain intact. Startup and `SystemColorsChanged` apply/restore the presentation. The implementation follows [Windows high-contrast guidance](https://learn.microsoft.com/en-us/windows/win32/winauto/high-contrast-parameter).
+- Added `tests/AccessibilityCases.ps1` and a required harness marker. Verified contextual labels, invalid target descriptions, retained drafts through repeated theme changes, save failure/retry, Revert/Test notifications, F8/menu status, quiet background refresh, unchanged geometry/LED velocities, and no incidental audio/profile/action writes. The notification API returned **True**, which establishes submission to Windows, **not actual Narrator speech**.
+- Full `Test-ApcDeck.ps1` passed before restart: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=19, BluetoothPaired=4, KnobSweepMs=228.03, UI=Visible**. Offline sweep 184.28 ms. Existing keyboard tests include all 90 mappings and 25 individual piano keys. Parsing and `git diff --check` passed. `ApcDeck.psm1` and the MIDI/queued-dispatch section are unchanged from HEAD.
+- Inspected the rendered light system-color fixture at minimum size and an actual Windows dark high-contrast transition in an isolated, offline UI probe. Live `SystemColorsChanged` updated the open form; this exposed and led to fixing the transport border color. The initial light OS theme attempt was inconclusive; the later Desert test below qualified the actual light-theme transition. Captures and disposable probe scripts: `C:\Users\jdben\Documents\APC-DECK UI Audit 2026-10-29\accessibility`.
+
+### Runtime and restoration
+
+- After the full suite passed, verified production PID 18328's identity and saved state, stopped it normally, and relaunched through the existing desktop shortcut/Explorer. Replacement **PID 69408, HWND 9373322**, responds and reports **MIDI: ONLINE (IN + LED OUT)**. Restored 1665×962 at x=888/y=265; Pad_32 selected with no pending edits.
+- Profile SHA-256 remains **D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4**. Windows text scale remains **105**. Actual high contrast is **False**, system Window/WindowText are white/black, and Windows restored `Custom.theme`. Original HighContrast registry values restored: Flags `4152`, empty `High Contrast Scheme`.
+- Test Narrator PID 30808 was started, but the UI driver reported the desktop locked. Neither shortcut attempts nor speech recap produced verifiable speech evidence. Direct process termination was denied by Windows; opening the installed Narrator Home app and invoking **Exit Narrator** succeeded. Verified no Narrator process and `NoRoam\RunningState=0`. Offline probe exited normally; production remained intact throughout its tests.
+
+### Remaining acceptance work
+
+The full Narrator journey is **not complete**. Existing automation-provider tests must not be relabeled as spoken acceptance. Avoid rerunning unrelated passing regression work unless code changes. This pass does not claim physical MIDI-to-audio latency measurement or app-session volume readback.
+
+### Interactive follow-up after the user unlocked Windows
+
+- Used the isolated offline probe again (PID 74760), preserving production PID 69408 and the real profile. Narrator speech recap visibly confirmed **Pad_32 — OUT: CMD CTR**, SetDefaultDevice, Default, Green LED, row/column; **C sharp 3 — KEY C#3 — Key_49**, button/None; and F8 output **KEY D3. Key_50. Saved · no pending changes. Action: None. Test saved action (Ctrl+T)**. This is actual Narrator speech-history evidence, beyond provider/API acceptance.
+- Exercised native inspector focus, label draft, empty target, Revert, simulated save failure with retained draft, successful retry, recorded Test, and cached knob F8 status. The empty target disabled Apply/Test and queued the explanatory error; failure retained the draft; retry saved only the offline copy. Do not classify these later announcements as spoken acceptance: the restarted Narrator's recap could not be reopened reliably through the lower-integrity helper. A manual shortcut request was sent; no reply was received before cleanup.
+- The `desktop_unlocked=false` driver field was still returned after unlock, while a read-only Win32 input-desktop query returned **Default**. That field alone is insufficient evidence that Windows is locked. Later foreground/input errors explicitly described Windows integrity/UIAccess restrictions. Do not repeat the earlier lock diagnosis from that field alone.
+- Applied **Desert** through Windows Settings → Accessibility → Contrast themes. Verified actual OS `hcwhite.theme`, probe HighContrast=True, Window=-1297 / WindowText=-12763843, and inspected `accessibility\actual-desert.png`: inspector, selected knob, transport boundaries, pad labels, and natural/sharp piano identities remained readable. Restored **None** through Settings and verified `Custom.theme`, HighContrast=False, white/black system colors, text scale 105, original Flags 4152/empty scheme, and the prior remembered dark contrast theme. Both actual dark and light theme transitions are now qualified.
+- No application code changed in this follow-up, so the preceding full-suite receipt remains applicable. Remaining acceptance is the actual Narrator spoken inspector error/save/retry/Revert/Test sequence and a fuller spoken navigation sample; it requires an interactive recap or listening check. The broader functionality already has passing automated tests.
+- Follow-up cleanup verified: Narrator exited (RunningState=0), offline probe exited, Settings closed, production PID 69408 remains responding at 1665×962 / x888 / y265, and profile SHA-256 is unchanged. No additional restart was needed.
+- The assisted recap attempt replayed empty-target error, Revert, draft edit, simulated save failure, retry, and Test in offline probe PID 93824 / HWND 1508372 with Narrator PID 51164. Notifications submitted with focus; the real profile remained unchanged. The user then clarified that the crosshair/dim overlay belonged to Speechify and chose Speechify as the preferred reader. Further Narrator spoken acceptance is deferred in favor of this on-demand workflow; the partial Narrator qualification above remains accurate.
+- Verified the installed Speechify shortcuts: Alt+A reads selected text, Alt+X captures a screen region to listen, and Alt+Q pauses/resumes. With the offline probe in front, selected its native status text and invoked Alt+A. Speechify's Today listening history contained the exact status and result: `MIDI: OFFLINE | Speaker: COMMAND_CENTER (50%) | Mic: CMD_MIC (50%)` and `[TEST Pad_32 — not saved] Offline action test recorded; no action executed.` This proves selected-text ingestion/listening-history evidence, not independent auditory verification or screenshot-OCR qualification. F8's Windows notifications do not automatically invoke Speechify.
+- Final cleanup on 2026-10-29: exited Narrator through Narrator Home (RunningState=0), closed probe PID 93824 using its stop marker, and left Speechify running on its Shortcuts page. Production PID 69408 remained responding. Real profile SHA-256 remained D7C5D06D756824D37E882F2C7703BA5376BF002E1AD67EC7B2F79D665128FCC4; Windows text scale was 105, contrast Flags were 4152, and Custom.theme was restored. No application code changed or additional restart was needed during that follow-up.
+
+### Release verification (2026-11-04)
+
+- Refreshed origin/main; local and remote base were both `f4dd187`. Reviewed the pending accessibility implementation and tests; `ApcDeck.psm1` remains unchanged. No application implementation changes were needed for release.
+- Full `Test-ApcDeck.ps1` passed again: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=18, BluetoothPaired=4, KnobSweepMs=309.95, UI=Visible**. Offline UI sweep was 117.03 ms. All inspector, live-state, keyboard/piano, contrast, text-layout, and accessibility markers passed. `git diff --check` passed. These sweep figures measure startup selection/redraw, not physical MIDI-to-audio latency.
+- The current real profile differs from the October test baseline and was preserved: SHA-256 **02805CD35F251798CCD8FC37A45E264A4D6AA73DC6D16F70015DFCE66C3B8781** before and after testing. No production restart was performed for this commit/push request.
+- Recommended next audit work: measured fluidity (P2-10). Profile selection, Apply, and Refresh separately; optimize only demonstrated delays while preserving cached audio access, MIDI dispatch ordering, hardware layout, and physical LED behavior. Actual mixed-DPI monitor transitions/small work areas remain a separate qualification gap; app-session volume readback remains optional. Full Narrator spoken qualification is deferred per the user's Speechify preference, and Speechify screenshot OCR still needs its own witness.

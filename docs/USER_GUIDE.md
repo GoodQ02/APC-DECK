@@ -40,6 +40,7 @@ apc-deck -Mode Stop
   - `Ctrl+S` — **Apply the selected draft**
   - `Ctrl+T` — **Test the displayed draft without saving**
   - `F5` — **Refresh Devices & Sync LEDs**
+  - `F8` — **Read selected status** through a screen reader that handles Windows accessibility notifications (also under **More actions…**)
   - `Right-Click` on any pad, button, knob, or piano key — **Select & Test Action Immediately**
 
 ---
@@ -120,6 +121,19 @@ The inspector keeps the selected control and saved status at the top. **Follow h
 - At compact sizes, tiles shorten feedback and omit the dial artwork to keep numbers and guidance readable. Hover for the full status, saved label, and target; hardware positions do not change.
 - Application-volume mappings have no session-volume observer yet. They show **No readback** (compact: **Unverified**) and use direct writes; endpoint pickup cannot validate an app session level.
 - The footer refreshes telemetry while retaining your last action message. Bluetooth pad state is refreshed from the existing audio-endpoint evidence; it is not a general Bluetooth radio connection probe.
+
+### Screen readers and Windows contrast themes
+
+- Contextual field names and descriptions expose the selected action's targets, retained draft state, validation errors, and why Apply/Test are unavailable. All 90 mappings, including individual piano keys, remain accessible through the established keyboard navigation.
+- While the app has focus, draft/error transitions and explicit Apply/Revert/Test outcomes send a short, debounced Windows accessibility notification. Background hardware refreshes remain quiet. **F8** or **More actions → Read selected status** requests the selected mapping, cached pad/knob state, mute/pickup feedback, draft status, and validation without executing the mapping.
+- Windows high contrast uses system foreground/background/selection colors throughout the controller, inspector, transport buttons, and focus outlines. The piano preserves its physical geometry with contrasting natural/sharp keys. Changes apply while the window is open and restore the ordinary palette when high contrast is turned off. Screen colors do not alter physical LED mappings or output.
+- Qualification status: automated accessibility-provider/notification tests and actual Windows dark and Desert light contrast transitions passed. Narrator's speech recap confirmed pad identity/state, a sharp piano-key identity, and the F8 piano status readout. The inspector failure/recovery journey passed functionally, but its actual spoken announcements still need confirmation; an accepted Windows notification is not proof that a screen reader spoke it.
+
+### Speechify: on-demand reading
+
+Speechify is the user's preferred reader. Its installed Windows shortcuts are **Alt+A** to read selected text, **Alt+X** to screenshot and listen, and **Alt+Q** to pause/resume. The dimmed screen and crosshair after Alt+X are the screen-region selector: drag around the text to read. See the [Speechify Windows guide](https://speechify.com/windows/).
+
+For the selectable status footer, focus its text, select the desired text (Ctrl+A selects all), and press Alt+A while APC-DECK is in front. Use Alt+X for painted hardware labels that cannot be selected as text. Speechify's listening history verified ingestion of the offline test's exact status and action result; screenshot OCR was not separately tested. F8 sends a Windows accessibility notification and does not automatically invoke Speechify. Narrator can remain off for this on-demand workflow.
 
 ## 5. Knob Zero-Out, Sub-Millisecond Responsiveness & Soft-Takeover
 

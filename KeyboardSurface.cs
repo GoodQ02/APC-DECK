@@ -2,6 +2,7 @@ namespace GoodCube.ApcDeck {
     using System;
     using System.Drawing;
     using System.Windows.Forms;
+    public static class DeckTheme { public static bool HighContrast; }
     internal static class DeckFocus {
         internal static bool IsNavigation(Keys keys) {
             if ((keys & (Keys.Control | Keys.Alt)) != 0) return false;
@@ -14,8 +15,8 @@ namespace GoodCube.ApcDeck {
         internal static void Draw(Graphics g, Rectangle bounds) {
             bounds.Inflate(-5, -5);
             if (bounds.Width < 4 || bounds.Height < 4) return;
-            using (var outer = new Pen(Color.Black, 4)) g.DrawRectangle(outer, bounds);
-            using (var inner = new Pen(Color.White, 2)) g.DrawRectangle(inner, bounds);
+            using (var outer = new Pen(DeckTheme.HighContrast ? SystemColors.Window : Color.Black, 4)) g.DrawRectangle(outer, bounds);
+            using (var inner = new Pen(DeckTheme.HighContrast ? SystemColors.WindowText : Color.White, 2)) g.DrawRectangle(inner, bounds);
         }
     }
 
