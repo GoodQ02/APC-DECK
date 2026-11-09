@@ -25,6 +25,7 @@ function Set-NavigationEntry([string]$cid) {
 }
 
 function Focus-ApcControl([string]$cid) {
+    Show-WorkspacePane $false
     if ($cid.StartsWith('Key_')) {
         $keybedCanvas.FocusNote = [int]$cid.Substring(4)
         $null = $keybedCanvas.Focus()
@@ -33,6 +34,7 @@ function Focus-ApcControl([string]$cid) {
         $null = $script:ControlButtons[$cid].Focus()
     }
     if ($script:SelectedId -ne $cid) { Select-ApcControl $cid }
+    Show-DeckSelection $cid
 }
 
 function Move-DeckKeyboardFocus([string]$cid, [Windows.Forms.KeyEventArgs]$e) {
@@ -47,8 +49,8 @@ function Move-DeckKeyboardFocus([string]$cid, [Windows.Forms.KeyEventArgs]$e) {
     if ($key -eq 'Tab') {
         $groups = @($script:NavigationGroups.Keys)
         $nextGroup = [array]::IndexOf($groups, $group) + $(if ($e.Shift) { -1 } else { 1 })
-        if ($nextGroup -lt 0) { $null = $btnMore.Focus(); return }
-        if ($nextGroup -ge $groups.Count) { $null = $chkMidiLearn.Focus(); return }
+        if ($nextGroup -lt 0) { Show-WorkspacePane $true; $null = $btnMore.Focus(); return }
+        if ($nextGroup -ge $groups.Count) { Show-WorkspacePane $true; $null = $chkMidiLearn.Focus(); return }
         $targetGroup = $groups[$nextGroup]
         $target = if ($targetGroup -eq 'Piano') { "Key_$($keybedCanvas.FocusNote)" } else { $script:NavigationEntry[$targetGroup] }
         Focus-ApcControl $target
@@ -110,7 +112,7 @@ $form.Add_KeyDown({
     param($sender, $e)
     if ($e.KeyCode -eq 'F6' -and -not $e.Control -and -not $e.Alt) {
         $e.SuppressKeyPress = $true
-        if ($chassisLayout.ContainsFocus) { $null = $txtLabel.Focus() }
+        if ($chassisLayout.ContainsFocus -or ($script:CompactWindow -and $compactTabs.SelectedIndex -eq 0)) { Show-WorkspacePane $true; $null = $txtLabel.Focus() }
         else { Focus-ApcControl $script:SelectedId }
     }
 })

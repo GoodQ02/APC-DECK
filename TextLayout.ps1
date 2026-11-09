@@ -71,7 +71,7 @@ function Resize-ReadableInspector {
         foreach ($ctrl in $inspHeader.Controls) {
             $ctrl.Width = [math]::Max(100, $inspHeader.ClientSize.Width - 4)
             # Stable two-line context avoids relayout on every hardware selection.
-            $ctrl.Height = $ctrl.Font.Height * 2 + 4
+            $ctrl.Height = $ctrl.Font.Height * $(if ($script:CompactWindow) { 1 } else { 2 }) + 4
             $headerHeight += $ctrl.Height + $ctrl.Margin.Vertical
         }
         $inspectorLayout.RowStyles[0].Height = $headerHeight
@@ -79,6 +79,7 @@ function Resize-ReadableInspector {
         $swatchPanel.Height = $form.Font.Height + 16
         foreach ($swatch in $swatchPanel.Controls) { $swatch.Width = $swatchWidth; $swatch.Height = $swatchPanel.Height - 4 }
         $rowHeights = @([math]::Max(26, $lblDraftState.Font.Height * 2 + 6), [math]::Max(36, $btnSave.Font.Height + 14), [math]::Max(36, $btnTest.Font.Height * 2 + 12), [math]::Max(28, $btnMore.Font.Height + 12))
+        if ($script:CompactWindow) { $rowHeights[0]=[math]::Max(28,$btnMore.Font.Height+12); $rowHeights[3]=0 }
         for ($i=0; $i -lt 4; $i++) { $inspectorFooter.RowStyles[$i].Height = $rowHeights[$i] }
         $inspectorLayout.RowStyles[2].Height = ($rowHeights | Measure-Object -Sum).Sum + 12
         foreach ($combo in @($cmbAction,$cmbTarget1,$cmbTarget2,$cmbLed,$cmbOffLed)) {

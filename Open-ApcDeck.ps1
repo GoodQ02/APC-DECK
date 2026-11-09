@@ -207,6 +207,7 @@ $script:KnobStates              = @{}
 $script:LastStatusEvent         = ''
 . (Join-Path $PSScriptRoot 'KnobState.ps1')
 $script:UiHighContrast          = $false
+$script:CompactWindow           = $false
 $script:PadVelocities           = @{}
 $script:PadPresentations        = @{}
 . (Join-Path $PSScriptRoot 'PadPresentation.ps1')
@@ -366,13 +367,13 @@ $form.AutoScaleMode = [Windows.Forms.AutoScaleMode]::None
 $form.Text = $windowTitle
 $form.KeyPreview = $true
 $primWa = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$initW  = [Math]::Min(1680, [Math]::Max(1260, $primWa.Width - 70))
-$initH  = [Math]::Min(970,  [Math]::Max(760,  $primWa.Height - 54))
+$initW  = [Math]::Min(1680, $primWa.Width - 40)
+$initH  = [Math]::Min(970, $primWa.Height - 40)
 $initX  = $primWa.X + [int](($primWa.Width - $initW) / 2)
 $initY  = $primWa.Y + [int](($primWa.Height - $initH) / 2)
 $form.StartPosition = [Windows.Forms.FormStartPosition]::Manual
 $form.Bounds = [Drawing.Rectangle]::new($initX, $initY, $initW, $initH)
-$form.MinimumSize = [Drawing.Size]::new(1200, 740)
+$form.MinimumSize = [Drawing.Size]::new(640, 560)
 $form.Font = [Drawing.Font]::new('Segoe UI', 9.0)
 $form.BackColor = $cChassisBg
 $form.ForeColor = [Drawing.Color]::Gainsboro
@@ -419,6 +420,11 @@ $headerPanel.Add_Paint({
         $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
         $w = $sender.ClientSize.Width
+        if ($script:CompactWindow) {
+            $g.DrawString('APC key 25', $script:FHeaderModel, [Drawing.Brushes]::Gainsboro, 12, 6)
+            $g.DrawString('F6  Controller / Inspector', $script:FHeaderSub, [Drawing.Brushes]::Gainsboro, 210, 13)
+            return
+        }
         $g.Clear($cBezelBg)
 
         # Top crimson Akai accent line
@@ -468,7 +474,8 @@ $rootLayout.Controls.Add($mainSplit, 0, 1)
 #   Bottom Deck (33% height):
 #     Full-Width 25-Note Overlapping Synth-Action Piano Keyboard (15 White Keys C3..C5 + 10 Recessed Black Sharp/Flat Keys)
 $chassisLayout = [Windows.Forms.TableLayoutPanel]::new()
-$chassisLayout.Dock = 'Fill'
+$chassisLayout.Dock = 'None'
+$chassisLayout.Margin = [Windows.Forms.Padding]::new(0)
 $chassisLayout.Padding = [Windows.Forms.Padding]::new(8, 6, 6, 6)
 $chassisLayout.BackColor = $cChassisBg
 $chassisLayout.Font = $form.Font
@@ -476,7 +483,12 @@ $chassisLayout.ColumnCount = 1
 $chassisLayout.RowCount = 2
 [void]$chassisLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 67))
 [void]$chassisLayout.RowStyles.Add([Windows.Forms.RowStyle]::new([Windows.Forms.SizeType]::Percent, 33))
-$mainSplit.Controls.Add($chassisLayout, 0, 0)
+$deckViewport = [Windows.Forms.Panel]::new()
+$deckViewport.Dock = 'Fill'
+$deckViewport.AutoScroll = $true
+$deckViewport.AccessibleName = 'Controller viewport'
+$deckViewport.Controls.Add($chassisLayout)
+$mainSplit.Controls.Add($deckViewport, 0, 0)
 
 # Upper Hardware Deck Split (Left = Clip Matrix + Scene/Track Buttons, Right = 2x4 Knobs + Transport Cluster)
 $upperDeck = [Windows.Forms.TableLayoutPanel]::new()
@@ -1690,6 +1702,7 @@ function Select-ApcControl([string]$cid) {
         Invalidate-ApcControl $oldId
     }
     Invalidate-ApcControl $cid
+    Show-DeckSelection $cid
 }
 
 # Wire surface button clicks (Left-Click selects; Right-Click selects AND tests action immediately)
@@ -1866,14 +1879,7 @@ $form.Add_KeyDown({
 function Restore-MainWindow {
     $form.Show()
     $form.WindowState = 'Normal'
-    $wa = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    $w  = [Math]::Min([Math]::Max($form.Width, 1200), $wa.Width - 40)
-    $h  = [Math]::Min([Math]::Max($form.Height, 740), $wa.Height - 40)
-    if (-not $wa.Contains($form.Bounds)) {
-        $x = $wa.X + [int](($wa.Width - $w) / 2)
-        $y = $wa.Y + [int](($wa.Height - $h) / 2)
-        $form.Bounds = [Drawing.Rectangle]::new($x, $y, $w, $h)
-    }
+    Fit-WindowToWorkArea ([Windows.Forms.Screen]::FromControl($form).WorkingArea)
     Update-PianoKeybedGeometry
     $form.Activate()
     [GoodCube.ApcDeck.NativeBridge]::BringFormToFront($form.Handle)
@@ -2127,6 +2133,7 @@ $chkPickupMode.Add_CheckedChanged($refreshKnobFeedback)
 $chkEditOnly.Add_CheckedChanged($refreshKnobFeedback)
 
 . (Join-Path $PSScriptRoot 'Accessibility.ps1')
+. (Join-Path $PSScriptRoot 'WindowLayout.ps1')
 . (Join-Path $PSScriptRoot 'ContrastTheme.ps1')
 . (Join-Path $PSScriptRoot 'DeviceRefresh.ps1')
 

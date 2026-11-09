@@ -114,6 +114,13 @@ The inspector keeps the selected control and saved status at the top. **Follow h
 
 ---
 
+### Small windows and mixed-DPI displays
+
+- Below 1180 pixels of client width (in the app's logical coordinates), **Controller** and **Inspector** tabs replace the side-by-side workspace. **F6** switches between them. Drafts stay attached to their mappings when switching tabs, resizing, or moving between monitors.
+- The window can shrink to **640 × 560** logical pixels. The controller keeps its physical arrangement and scrolls when necessary; keyboard selection brings the selected pad, knob, or piano key into view. The inspector keeps **Apply, Revert, Test, and More actions** visible while its fields scroll. At larger text sizes, context moves into the scrolling area to leave room for editing.
+- Finishing a move/resize or restoring/activating the window fits it to its current monitor's work area, including displays above or left of the primary display. Restoring no longer pulls a secondary-monitor window back to the primary display.
+- Live 125% ↔ 150% transitions were checked with an isolated window. The established Windows bitmap-scaling mode is retained; this pass improves fit and interaction, and does not introduce per-monitor sharp rendering.
+
 ### Live volume and pickup feedback
 
 - Knobs and the speaker/microphone footer reconcile with Windows on the existing **5-second refresh**, including external volume/mute changes and default-device switches. Refresh waits while a knob was turned in the last 800 ms; F5 requests an immediate refresh.

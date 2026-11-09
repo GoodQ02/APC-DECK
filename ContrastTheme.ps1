@@ -48,6 +48,11 @@ function Paint-ContrastSurface($Sender, $Event, [string]$Kind) {
     $selectedEdge = [Drawing.Pen]::new([Drawing.SystemColors]::Highlight,3)
     try {
         if ($Kind -eq 'Header') {
+            if ($script:CompactWindow) {
+                $g.DrawString('APC key 25',$script:FHeaderModel,$ink,12,6)
+                $g.DrawString('F6  Controller / Inspector',$script:FHeaderSub,$ink,210,13)
+                return
+            }
             $g.DrawString('AKAI PROFESSIONAL', $script:FHeaderBrand,$ink,21,15)
             $g.DrawString('APC key 25',$script:FHeaderModel,$ink,196,11)
             $g.DrawString('Arrows select · Tab groups · F6 edit · F8 read · Ctrl+T test',$script:FHeaderSub,$ink,322,17)

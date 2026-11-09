@@ -1,5 +1,5 @@
 <!-- DOC_STATUS: AUTHORITATIVE -->
-<!-- HANDOFF_DATE: 2026-11-04 -->
+<!-- HANDOFF_DATE: 2026-11-08 -->
 
 # APC-DECK — Codex Agent Handoff & Current State Reference
 
@@ -11,6 +11,8 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 ---
 
 ## 1. Executive Summary & Live State
+
+**Mixed-DPI and small-window release (2026-11-08):** implemented on published `f6d2085`. Compact Controller/Inspector tabs, a scrollable hardware viewport, fixed inspector actions, and current-monitor work-area fitting are covered by the full suite and actual 125% ↔ 150% display transitions. Physical layout, LED outputs, and MIDI dispatch are preserved. See Section 15 for evidence and limits. The user authorized committing and pushing this tested pass to origin/main; implementation, tests, and documentation belong to this release.
 
 **Measured fluidity release (2026-11-04):** implemented on published `3d23782`, with baseline/after measurements and full regression verification before launch. Unchanged target choices no longer rebuild native dropdowns. Explicit F5 discovery runs in an owned read-only process and returns only name strings; the UI retains its own CoreAudio objects and reads current levels at completion. Apply persistence and MIDI dispatch ordering are preserved. See Section 14. After verification, the user authorized documentation updates, commit, and push to origin/main; implementation, tests, and documentation belong to this release.
 
@@ -425,3 +427,27 @@ Cold name/device discovery originally occupied the calling thread for **566.33 m
 - Full `Test-ApcDeck.ps1` passed before launch: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=18, BluetoothPaired=4, KnobSweepMs=283.45, UI=Visible**. Offline sweep: 110.8 ms. PowerShell parsing and `git diff --check` passed. No real profile/audio-action writes occurred during the isolated profiling and interaction tests.
 - APC-DECK was closed when this work began. After tests passed, launched the existing desktop shortcut. **PID 69272 / HWND 135962** is visible and reports **MIDI: ONLINE (IN + LED OUT)**, with Saved/no pending changes. A live F5 completed successfully and reported synchronized endpoints/LEDs; rendered inspection retained the hardware layout and fixed inspector actions. The current launch geometry is 2082×1204 at x679/y144; old October process IDs/geometry were not treated as live state.
 - Real profile SHA-256 remained **02805CD35F251798CCD8FC37A45E264A4D6AA73DC6D16F70015DFCE66C3B8781** after testing and launch. The user subsequently authorized publishing this pass to origin/main. Release preparation updated documentation only and retained the passing implementation/test evidence above; no additional app restart was needed. Remaining audit opportunities: actual mixed-DPI/small-work-area qualification, restrained interaction feedback, and optional app-session readback.
+
+## 15. Mixed-DPI and small-window usability (2026-11-08)
+
+### Changes and preservation
+
+- The previous 1200-pixel minimum could not fit the portrait monitor's 864-pixel logical work area at 125%. The window now allows 640 × 560 logical pixels; below 1180 pixels of client width it offers native Controller/Inspector tabs with F6 switching. The same inspector controls retain their drafts, focus navigation, accessibility metadata, and actions across pane changes.
+- The controller sits in a scrollable viewport with a 780 × 580 minimum canvas. Its 5×8 pads, scenes/tracks, 2×4 knobs, transport cluster, and 25-key piano retain their topology. Selecting a control reveals it in the viewport. Wide geometry restores exactly after compact/text-size roundtrips; the 1680 × 970 window retains its original 1272 × 817 chassis.
+- In compact mode, selected metadata scrolls with the fields and More actions shares the draft-status row. Apply/Revert/Test remain fixed. Tests caught and corrected both insufficient editor height at 225% text and stale scrollbar dimensions after returning to a wide window. Shift+Tab from the first deck group reveals the inspector before focusing More actions.
+- Restore, activation, and completed moves/resizes fit to the current monitor's work area, using the form's coordinate space. Startup remains centered on the primary display. No global display-setting subscription or DPI-awareness change was introduced.
+- `ApcDeck.psm1`, physical LED mapping/transmission, audio writes, timers, and device discovery remain unchanged. The MIDI dispatch block matches `f6d2085` exactly after newline normalization. The normal selection path skips viewport work when no scrollbars are present.
+
+### Verification
+
+- Full `Test-ApcDeck.ps1` passed before production launch: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=21, BluetoothPaired=4, KnobSweepMs=419.3, UI=Visible**. Offline sweep was **135.84 ms**. These are smoke observations under the existing 500 ms gate, not physical MIDI-to-audio latency measurements.
+- New `tests/WindowLayoutCases.ps1` covers 1024×700, 800×600, and 640×560 at 100%, 150%, and 225% text; visible actions and usable editor space; F6 and Shift+Tab; pad/scene/knob/transport/natural/sharp-key visibility; retained drafts; exact wide geometry restoration; portrait/negative-origin work areas; and no LED/audio/action/profile writes. Existing inspector, live-state, pickup, keyboard, contrast, text-size, accessibility, and fluidity checks all passed. PowerShell parsing and `git diff --check` passed.
+- With explicit user permission, temporarily changed only Settings Display 2 (portrait/flipped) from 125% to 150%. Offline probe PID 24176 moved from primary 125% to portrait 150%, back to primary 125%, again to portrait 150%, and to the upper 125% monitor with a negative origin. A native label draft survived; Apply/Revert/Test/More remained inside the compact inspector. Invoking C5 brought its full UIA rectangle inside the viewport. Both Settings readback and `GetScaleFactorForMonitor` confirmed restoration to 125% before cleanup.
+- At 150%, the portrait work area was 720 × 1232 in the app's logical coordinates; the tested compact window was 659 × 606 and fit inside it. The upper monitor's work area was (-321,-1680,3072,1642). Frame setters can report a one-pixel mismatch from nonclient/DPI rounding; independent UIA and in-process readbacks supplied the actual geometry.
+- DPI awareness remains **0 / unaware**, and `GetDpiForWindow` remains **96**. Windows continues bitmap scaling; this is mixed-DPI fit/interaction qualification, not per-monitor crisp-rendering qualification. Cua window screenshots can include black padding for the scaled unaware window; fixture DrawToBitmap images and live UIA bounds supplement them.
+- Evidence, rendered fixtures, full-suite output, and live monitor-state receipts: `C:\Users\jdben\Documents\APC-DECK UI Audit 2026-11-08\window`. The Settings instance initially hung; it was restarted for the test and closed afterward. The offline probe exited through its stop marker. No Narrator or Speechify session was needed.
+
+### Production launch and current boundary
+
+- APC-DECK was closed at the start of this task. After the full suite and live mixed-DPI checks passed, launched the existing desktop shortcut. **PID 99720 / HWND 993318** is visible and responding, at 2082 × 1204 / x679 / y144, and reports **MIDI: ONLINE (IN + LED OUT)**. The normal hardware/inspector view is restored.
+- The real profile SHA-256 remains **02805CD35F251798CCD8FC37A45E264A4D6AA73DC6D16F70015DFCE66C3B8781**. Portrait scaling is restored to 125%; the offline probe and Settings test window are closed. The user subsequently authorized committing and pushing this pass to origin/main. Release preparation refreshed origin/main (matching base `f6d2085`), reviewed the diff and passing test receipt, and updated documentation only; no additional app restart was needed. PID 99720 remained responding.
