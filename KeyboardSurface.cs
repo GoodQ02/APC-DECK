@@ -66,10 +66,11 @@ namespace GoodCube.ApcDeck {
         protected virtual Rectangle FocusBounds { get { return ClientRectangle; } }
         protected override void OnPaint(PaintEventArgs e) {
             base.OnPaint(e);
+            DrawInteraction(e.Graphics);
             if (Focused) DeckFocus.Draw(e.Graphics, FocusBounds);
         }
         protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
-        protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
+        protected override void OnLostFocus(EventArgs e) { ClearPressedFeedback(); base.OnLostFocus(e); Invalidate(); }
         public void SelectMapping() {
             if (InvokeRequired) { BeginInvoke(new Action(SelectMapping)); return; }
             Focus();
@@ -88,7 +89,7 @@ namespace GoodCube.ApcDeck {
     }
 
     // One lightweight canvas; 25 virtual accessibility children retain the real key geometry.
-    public class KeybedCanvas : SurfaceTile {
+    public partial class KeybedCanvas : SurfaceTile {
         public readonly Rectangle[] KeyBounds = new Rectangle[25];
         public readonly Rectangle[] KeyFocusBounds = new Rectangle[25];
         public readonly string[] KeyNames = new string[25];

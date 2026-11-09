@@ -173,7 +173,7 @@ namespace GoodCube.ApcDeck {
         }
     }
 }
-"@ + [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'KeyboardSurface.cs')))
+"@ + [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'KeyboardSurface.cs')) + [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'InteractionFeedback.cs')))
 }
 
 if ($OfflinePreview) {
@@ -1351,7 +1351,7 @@ function New-ActionBtn([string]$text, [Drawing.Color]$bg) {
     $b.Font = [Drawing.Font]::new('Segoe UI Semibold', 9.0)
     return $b
 }
-$lblDraftState = [Windows.Forms.Label]::new()
+$lblDraftState = [GoodCube.ApcDeck.AppliedFeedbackLabel]::new()
 $lblDraftState.Dock = 'Fill'
 $lblDraftState.TextAlign = 'MiddleLeft'
 $lblDraftState.AutoEllipsis = $true
@@ -1611,6 +1611,7 @@ function Get-InspectorError($mapping) {
 }
 
 function Update-InspectorDraftState {
+    $lblDraftState.ClearFeedback()
     $dirty = $script:Drafts.ContainsKey($script:SelectedId)
     $mapping = Get-InspectorMapping
     $errorText = Get-InspectorError $mapping
@@ -1765,6 +1766,8 @@ $btnSave.Add_Click({
     Select-ApcControl $cid
     Update-ControlDescription $cid
     Set-StatusBanner "Applied $cid ($($mapping.Label))"
+    $lblDraftState.Text = if ($script:Drafts.Count) { "Applied · $($script:Drafts.Count) other drafts retained" } else { 'Applied · saved' }
+    $lblDraftState.ShowFeedback()
 })
 
 $btnRevert.Add_Click({

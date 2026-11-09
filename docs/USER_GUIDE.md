@@ -121,6 +121,12 @@ The inspector keeps the selected control and saved status at the top. **Follow h
 - Finishing a move/resize or restoring/activating the window fits it to its current monitor's work area, including displays above or left of the primary display. Restoring no longer pulls a secondary-monitor window back to the primary display.
 - Live 125% ↔ 150% transitions were checked with an isolated window. The established Windows bitmap-scaling mode is retained; this pass improves fit and interaction, and does not introduce per-monitor sharp rendering.
 
+### Interaction feedback and reduced motion
+
+- Painted pads, scenes, tracks, knobs, and individual piano keys show a neutral hover outline and a pressed mark. Keyboard focus stays distinct; selection and volume updates remain immediate. These cues do not change physical LEDs or run mappings.
+- A successful Apply shows **Applied · saved** (or the count of other retained drafts) with a short underline. With Windows animation effects enabled, the underline holds for 1.2 seconds and fades over 160 ms; the confirmation text stays until the next edit or selection. Failed saves keep their existing error and draft.
+- When Windows **Settings → Accessibility → Visual effects → Animation effects** is off, the confirmation is static. High contrast also uses static system-color feedback. There is no idle animation loop; hiding/minimizing the inspector stops the short confirmation timer. Native transport and inspector buttons retain their standard hover/pressed behavior.
+
 ### Live volume and pickup feedback
 
 - Knobs and the speaker/microphone footer reconcile with Windows on the existing **5-second refresh**, including external volume/mute changes and default-device switches. Refresh waits while a knob was turned in the last 800 ms; F5 requests an immediate refresh.

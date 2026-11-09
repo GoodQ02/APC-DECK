@@ -12,10 +12,11 @@ foreach ($scale in @(1.0,1.5,2.25)) {
         $form.Size=[Drawing.Size]::new($size[0],$size[1]); Update-WindowLayout; $form.PerformLayout()
         Assert-Ui ($script:CompactWindow -and $compactTabs.Visible) 'Narrow window did not expose workspace tabs.'
         Show-WorkspacePane $true; Resize-ReadableInspector; $form.PerformLayout()
+        [Windows.Forms.Application]::DoEvents()
         Assert-Ui ($inspFlow.Height -ge 70) "No usable editor space at $scale / $size ($($inspFlow.Height))."
         foreach ($button in @($btnSave,$btnRevert,$btnTest,$btnMore)) {
             $rect=[Drawing.Rectangle]::new($form.PointToClient($button.PointToScreen([Drawing.Point]::Empty)),$button.Size)
-            Assert-Ui ($button.Visible -and $form.ClientRectangle.Contains($rect)) "Action outside compact inspector: $($button.Text)."
+            Assert-Ui ($button.Visible -and $form.ClientRectangle.Contains($rect)) "Action outside compact inspector: $($button.Text); scale=$scale size=$size visible=$($button.Visible) rect=$rect client=$($form.ClientRectangle) pane=$($compactTabs.SelectedIndex)."
             Assert-Ui ($button.Height -ge (Get-InspectorTextHeight $button ($button.Width-10))) 'Compact action text clipped.'
         }
         Assert-Ui (-not $inspFlow.HorizontalScroll.Visible) 'Compact inspector has horizontal overflow.'

@@ -12,6 +12,7 @@ try {
     if ($resultText -notmatch 'ACCESSIBILITY_TESTS_OK') { throw "Accessibility regression did not complete: $resultText" }
     if ($resultText -notmatch 'FLUIDITY_TESTS_OK') { throw "Fluidity regression did not complete: $resultText" }
     if ($resultText -notmatch 'WINDOW_LAYOUT_TESTS_OK') { throw "Window layout regression did not complete: $resultText" }
+    if ($resultText -notmatch 'INTERACTION_FEEDBACK_TESTS_OK') { throw "Interaction feedback regression did not complete: $resultText" }
     $result | Write-Output
 } finally { $env:APC_DECK_PREVIEW_DIRECTORY = $oldPreviewPath }
 $after = if (Test-Path $profilePath) { (Get-FileHash $profilePath).Hash } else { '' }

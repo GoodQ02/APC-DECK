@@ -146,3 +146,4 @@ Save-TestFrame 'inspector-long-draft.png'
 . (Join-Path $PSScriptRoot 'FluidityCases.ps1')
 
 . (Join-Path $PSScriptRoot 'WindowLayoutCases.ps1')
+. (Join-Path $PSScriptRoot 'InteractionFeedbackCases.ps1')

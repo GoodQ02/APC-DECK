@@ -1,5 +1,5 @@
 <!-- DOC_STATUS: AUTHORITATIVE -->
-<!-- HANDOFF_DATE: 2026-11-08 -->
+<!-- HANDOFF_DATE: 2026-11-09 -->
 
 # APC-DECK — Codex Agent Handoff & Current State Reference
 
@@ -11,6 +11,8 @@ This document provides the complete technical handoff for **APC-DECK** (`C:\Tool
 ---
 
 ## 1. Executive Summary & Live State
+
+**Restrained interaction feedback release (2026-11-09):** implemented and tested on published `284b668` on November 8. Painted controls and individual piano keys now have neutral hover/pressed cues; successful Apply has a bounded underline acknowledgement with static reduced-motion/high-contrast alternatives. Selection, volume rendering, hardware layout, and physical LED outputs are preserved. Full regression testing passed before restart. See Section 16. The user authorized committing and pushing this tested pass to origin/main; implementation, tests, and documentation belong to this release.
 
 **Mixed-DPI and small-window release (2026-11-08):** implemented on published `f6d2085`. Compact Controller/Inspector tabs, a scrollable hardware viewport, fixed inspector actions, and current-monitor work-area fitting are covered by the full suite and actual 125% ↔ 150% display transitions. Physical layout, LED outputs, and MIDI dispatch are preserved. See Section 15 for evidence and limits. The user authorized committing and pushing this tested pass to origin/main; implementation, tests, and documentation belong to this release.
 
@@ -451,3 +453,26 @@ Cold name/device discovery originally occupied the calling thread for **566.33 m
 
 - APC-DECK was closed at the start of this task. After the full suite and live mixed-DPI checks passed, launched the existing desktop shortcut. **PID 99720 / HWND 993318** is visible and responding, at 2082 × 1204 / x679 / y144, and reports **MIDI: ONLINE (IN + LED OUT)**. The normal hardware/inspector view is restored.
 - The real profile SHA-256 remains **02805CD35F251798CCD8FC37A45E264A4D6AA73DC6D16F70015DFCE66C3B8781**. Portrait scaling is restored to 125%; the offline probe and Settings test window are closed. The user subsequently authorized committing and pushing this pass to origin/main. Release preparation refreshed origin/main (matching base `f6d2085`), reviewed the diff and passing test receipt, and updated documentation only; no additional app restart was needed. PID 99720 remained responding.
+
+## 16. Restrained interaction feedback (2026-11-08)
+
+### Behavior and boundaries
+
+- `InteractionFeedback.cs` adds local hover and pressed outlines to the existing SurfaceTile controls and to individual natural/sharp piano keys. Pressed feedback clears on mouse release, pointer exit, capture loss, disabling, focus loss, and native key release. Keyboard focus remains a separate inner outline. Native transport/inspector buttons retain their standard states. No geometry, control positions, MIDI handlers, or physical LED values change.
+- Successful Apply displays `Applied · saved` or the count of retained drafts. Its underline holds for 1200 ms and fades for 160 ms on one 30 ms WinForms timer, then stops; the text remains. New editing/selection clears stale acknowledgement. Failed saves keep their error/draft and never start success feedback. The timer is disposed with the label and stops on hidden/minimized UI.
+- Windows animation preference is read through [SystemParametersInfo / SPI_GETCLIENTAREAANIMATION](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow). Failed reads choose static feedback. Disabled animations and high contrast use a static underline without a timer. An animation-preference change during the brief effect stops fading at the next tick. No Windows setting was changed for this pass; isolated tests inject the preference reader for both values and a live transition.
+- Selection and volume indicators remain immediate. There are no selection animations, per-control animation timers, idle decorative loops, new dependencies, or global preference subscriptions. `ApcDeck.psm1` is unchanged, and the MIDI dispatch block matches `284b668` exactly after newline normalization.
+
+### Verification
+
+- Full `Test-ApcDeck.ps1` passed before restart: **Controls=90, MidiIn=0, MidiOut=1, AudioEndpoints=21, BluetoothPaired=4, KnobSweepMs=405.55, UI=Visible**. Offline sweep: **169.16 ms**. This passes the existing 500 ms smoke gate; it is not a physical MIDI-to-audio latency measurement.
+- `tests/InteractionFeedbackCases.ps1` exercises native mouse/key handlers, black-key-first hit testing, cancellation, disabled/focus cleanup, successful/failed/repeated Apply, edit/selection interruption, finite timer completion, reduced-motion preference changes, high contrast, hidden panes, unchanged geometry, and no audio/action/LED side effects. Saves use the existing recording sink and never touch the real profile.
+- Initial suite runs encountered focus/visibility assertions during text/layout transitions. The fixture now pumps native pending events after layout/focus requests and reports actual bounds/focus in failures; the final complete suite passed. The hidden-pane timer assertion similarly waits for its bounded next tick. Existing keyboard/piano, live-state/pickup, contrast, larger-text, accessibility, fluidity, and compact-window checks all passed.
+- Rendered wide pressed/Apply, compact static reduced-motion, and high-contrast fixtures were inspected. They retain the existing dark console layout and readable text. Evidence and full output: `C:\Users\jdben\Documents\APC-DECK UI Audit 2026-11-08\feedback`. PowerShell parsing and `git diff --check` passed.
+
+### Restart and current state
+
+- Before restart, verified production PID 99720's identity, restored its minimized window through the app's show event, and confirmed Saved/no pending changes. Stopped it normally with `-Mode Stop` and verified exit, then launched the existing desktop shortcut only after the full suite passed.
+- Replacement **PID 57840 / HWND 1779612** is visible and responding at 2082 × 1204 / x679 / y144, reports **MIDI: ONLINE (IN + LED OUT)**, and shows Saved/no pending changes. Rendered inspection retains the hardware layout and persistent inspector controls.
+- Real profile SHA-256 remains **02805CD35F251798CCD8FC37A45E264A4D6AA73DC6D16F70015DFCE66C3B8781**. No Windows animation, text, display-scaling, or contrast setting was changed. On November 9 the user authorized committing and pushing this pass to origin/main. Release preparation refreshed origin/main (matching base `284b668`), reviewed the diff and passing full-suite receipt, and updated documentation only. PID 57840 remained responding and the profile hash was unchanged; no additional restart was needed.
+- Recommended next audit work: finish recovery clarity from P2-11 with a compact recent-events view and persistent, actionable failure details. Validation and draft retention already have passing coverage; the remaining gap is that the footer retains only one event, so a later action replaces an earlier failure. Keep history bounded and avoid automatic retries of actions that affect audio or launch shortcuts. Afterward, reconcile the original audit against the completed passes before adding further polish.

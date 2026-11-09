@@ -14,6 +14,7 @@ foreach ($scale in @(1.0,1.25,1.5,2.0,2.25)) {
     foreach ($size in @(@(1680,970),@(1200,740))) {
         $form.Size = [Drawing.Size]::new($size[0],$size[1]); $form.PerformLayout()
         Resize-InspectorContent
+        [Windows.Forms.Application]::DoEvents()
         $geometry = (@($script:ControlButtons.Keys | Sort-Object | ForEach-Object { "$_=$($script:ControlButtons[$_].Bounds)" }) + @($script:WhiteKeyRects.Keys | Sort-Object | ForEach-Object { "$_=$($script:WhiteKeyRects[$_])" }) + @($script:BlackKeyRects.Keys | Sort-Object | ForEach-Object { "$_=$($script:BlackKeyRects[$_])" })) -join '|'
         $sizeKey = "$($size[0])x$($size[1])"
         if ($scale -eq 1.0) { $geometryBySize[$sizeKey] = $geometry }
@@ -34,7 +35,8 @@ foreach ($scale in @(1.0,1.25,1.5,2.0,2.25)) {
             }
             $inspFlow.ScrollControlIntoView($cmbAction)
             $null = $cmbAction.Focus()
-            Assert-Ui ($cmbAction.Focused -and $inspFlow.ClientRectangle.IntersectsWith($cmbAction.Bounds)) 'Keyboard field scroll failed.'
+            [Windows.Forms.Application]::DoEvents()
+            Assert-Ui ($cmbAction.Focused -and $inspFlow.ClientRectangle.IntersectsWith($cmbAction.Bounds)) "Keyboard field scroll failed: scale=$scale size=$size control=$cid focused=$($cmbAction.Focused) bounds=$($cmbAction.Bounds) viewport=$($inspFlow.ClientRectangle)."
         }
         Select-ApcControl 'Pad_39'
         $inspFlow.AutoScrollPosition = [Drawing.Point]::Empty
