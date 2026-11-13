@@ -21,13 +21,18 @@ function Select-ApcControl([string]$cid) {
     $script:SelectedId = $cid
 }
 function Invalidate-ApcControl([string]$cid) { }
+function Set-AppSessionVolume {
+    param($Mapping,$Percent,$Pickup,$Physical)
+    $script:Calls.Add("App:$($Mapping.ControlId):$Percent")
+    return 'Queued app turn'
+}
 
 function Test-DispatchCase {
     param(
         [string]$Name, [string[]]$Expected, [bool]$EditOnly = $false,
         [bool]$Pickup = $false, [bool]$Learn = $true, [bool]$Visible = $true,
         [int]$MidiValue = 64, [int]$Previous = -1, [string]$Selected = 'Pad_32',
-        [int[]]$Codes = @(48, 49), [bool]$Known = $true, [string]$FixtureStatus = 'Ready'
+        [int[]]$Codes = @(48, 49), [bool]$Known = $true, [string]$FixtureStatus = 'Ready', [string]$Action='VolumeDevice'
     )
     $script:Calls = [Collections.Generic.List[string]]::new()
     $script:ProfileMap = @{}
@@ -40,7 +45,7 @@ function Test-DispatchCase {
     $latestCc = [ordered]@{}
     foreach ($cc in $Codes) {
         $cid = "Knob_$cc"
-        $script:ProfileMap[$cid] = [pscustomobject]@{ControlId=$cid; Label=$cid}
+        $script:ProfileMap[$cid] = [pscustomobject]@{ControlId=$cid; Label=$cid; ActionType=$Action}
         $script:KnobValues[$cid] = 75
         $script:KnobStates[$cid] = [pscustomobject]@{ Known=$Known; Status=$FixtureStatus; Pending=$false; Muted=$false }
         $script:KnobPickedUp[$cid] = $false
@@ -72,6 +77,6 @@ Test-DispatchCase 'Learn off skips inspector' @('Volume:Knob_48:64','Volume:Knob
 Test-DispatchCase 'Hidden window skips inspector' @('Volume:Knob_48:64','Volume:Knob_49:64') -Visible $false
 Test-DispatchCase 'Selected knob skips inspector' @('Volume:Knob_48:64') -Selected 'Knob_48' -Codes @(48)
 Test-DispatchCase 'Unavailable still learns without audio' @('Select:Knob_49') -Known $false -FixtureStatus 'Disconnected'
-Test-DispatchCase 'No readback retains direct app writes' @('Volume:Knob_48:64','Volume:Knob_49:64','Select:Knob_49') -Known $false -FixtureStatus 'No readback' -Pickup $true
-if ($script:KnobStates['Knob_48'].Status -ne 'No readback') { throw 'App write falsely acquired live readback.' }
+Test-DispatchCase 'App turns queue before selection without invented readback' @('App:Knob_48:50','App:Knob_49:50','Select:Knob_49') -Action VolumeApp -Pickup $true
+if ($script:KnobValues['Knob_48'] -ne 75) { throw 'Queued app turn falsely replaced observed readback.' }
 Write-Output 'PASS: Knob dispatch ordering, edit-only, bidirectional pickup without zero bypass, and MIDI Learn (15 cases; no audio writes).'

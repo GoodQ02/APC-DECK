@@ -14,6 +14,7 @@ try {
     if ($resultText -notmatch 'WINDOW_LAYOUT_TESTS_OK') { throw "Window layout regression did not complete: $resultText" }
     if ($resultText -notmatch 'INTERACTION_FEEDBACK_TESTS_OK') { throw "Interaction feedback regression did not complete: $resultText" }
     if ($resultText -notmatch 'RECOVERY_TESTS_OK') { throw "Recovery regression did not complete: $resultText" }
+    if ($resultText -notmatch 'APP_VOLUME_UI_TESTS_OK') { throw "App volume UI regression did not complete: $resultText" }
     $result | Write-Output
 } finally { $env:APC_DECK_PREVIEW_DIRECTORY = $oldPreviewPath }
 $after = if (Test-Path $profilePath) { (Get-FileHash $profilePath).Hash } else { '' }

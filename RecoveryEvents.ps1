@@ -4,7 +4,7 @@ $script:RecoverySequence = 0
 $script:EventsWindow = $null
 
 function Test-RecoveryFailureResult([string]$Text) {
-    return $Text -match "^(Audio device state changed|Device '.+' is not active\.|No active audio session for |Audio endpoint '.+' not found\.|Paired Bluetooth device '.+' not found\.|Stream Deck Bluetooth plugin not found\.|Unrecognized hotkey format )"
+    return $Text -match "^(App volume failed:|Audio device state changed|Device '.+' is not active\.|No active audio session for |Audio endpoint '.+' not found\.|Paired Bluetooth device '.+' not found\.|Stream Deck Bluetooth plugin not found\.|Unrecognized hotkey format )"
 }
 
 function Add-RecoveryEvent([string]$Text, [string]$Kind = '', [string]$ControlId = '', [bool]$Failed = $false) {
@@ -47,10 +47,13 @@ function Record-StatusEvent([string]$Text) {
     # These are operation results, not the high-frequency MIDI/selection messages.
     if ($Text -like 'Could not save mapping:*') { Add-RecoveryEvent $Text 'Apply' $script:SelectedId $true }
     elseif ($Text -like 'Test failed:*') { Add-RecoveryEvent $Text 'Test' $script:SelectedId $true }
-    elseif ($Text -match '^(Device refresh failed:|Observation failed:)') { Add-RecoveryEvent $Text 'Refresh' '' $true }
+    elseif ($Text -match '^(Device refresh failed:|Observation failed:|App volume failed:)') { Add-RecoveryEvent $Text 'Refresh' '' $true }
     elseif ($Text -like 'Recovered from runtime event:*') { Add-RecoveryEvent $Text 'Refresh' '' $true }
     elseif ($Text -like 'Applied *') { Resolve-RecoveryEvent 'Apply' $script:SelectedId; Add-RecoveryEvent $Text }
-    elseif ($Text -like '[[]TEST *') { Resolve-RecoveryEvent 'Test' $script:SelectedId; Add-RecoveryEvent $Text }
+    elseif ($Text -like '[[]TEST *') {
+        if ($Text -notlike '*requested; awaiting readback*') { Resolve-RecoveryEvent 'Test' $script:SelectedId }
+        Add-RecoveryEvent $Text
+    }
     elseif ($Text -like 'Refreshed audio/*') { Resolve-RecoveryEvent 'Refresh'; Add-RecoveryEvent $Text }
     elseif ($Text -match '^(Reverted |Reconnected |Reset entire |Balanced |\[ZERO OUT\])') { Add-RecoveryEvent $Text }
 }

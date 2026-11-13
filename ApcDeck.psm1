@@ -488,6 +488,7 @@ $script:DefaultCaptureDevice  = $null
 $script:LastSentLedVel        = @{}
 $script:SharedEnumerator      = $null
 $script:BtConnectBusy         = $false
+. (Join-Path $PSScriptRoot 'AppVolume.ps1')
 
 function Clear-AudioEndpointCache {
     $script:EndpointCache.Clear()
@@ -753,24 +754,8 @@ function Set-AudioVolumeByMapping {
                 return "Device '$($Mapping.Target)' is not active."
             }
             'VolumeApp' {
-                $out = Resolve-AudioEndpoint -MatchPattern '@DefaultRender' -Flow Render -UseCache
-                if ($out) {
-                    $sessions = $out.AudioSessionManager.Sessions
-                    $matched = 0
-                    for ($i = 0; $i -lt $sessions.Count; $i++) {
-                        $s = $sessions[$i]
-                        $procId = [int]$s.GetProcessID
-                        if ($procId -le 0) { continue }
-                        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
-                        if (($proc -and $proc.ProcessName -match [regex]::Escape($Mapping.Target)) -or ($s.DisplayName -and $s.DisplayName -match [regex]::Escape($Mapping.Target))) {
-                            $s.SimpleAudioVolume.Volume = [float]$scalar
-                            if ($AutoMuteAtZero) { $s.SimpleAudioVolume.Mute = $isZero }
-                            $matched++
-                        }
-                    }
-                    if ($matched -gt 0) { return "App '$($Mapping.Target)' ($matched session): $pct%" }
-                }
-                return "No active audio session for '$($Mapping.Target)'."
+                Reset-AppVolumePickup
+                return Set-AppSessionVolume -Mapping $Mapping -Percent $pct -AutoMute $AutoMuteAtZero.IsPresent
             }
         }
     } catch {
@@ -1290,6 +1275,7 @@ function Save-ApcProfile {
 }
 
 Export-ModuleMember -Function @(
+    'Initialize-AppVolumeRuntime', 'Update-AppVolumeSessions', 'Get-AppVolumeSnapshot', 'Reset-AppVolumePickup', 'Stop-AppVolumeSessions', 'Set-AppSessionVolume',
     'Clear-AudioEndpointCache',
     'Get-AudioEndpointsSnapshot',
     'Get-PairedBluetoothDevices',

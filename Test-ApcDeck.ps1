@@ -97,6 +97,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Knob dispatch regression test failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Live state cache regression test failed.' }
 
 # Exercise real inspector controls in an isolated process with recording sinks.
+& pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Test-ApcAppVolume.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'App volume regression test failed.' }
+
 & pwsh.exe -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Test-ApcInspector.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Inspector regression test failed.' }
 

@@ -96,12 +96,13 @@ function Paint-ContrastSurface($Sender, $Event, [string]$Kind) {
         }
         $g.DrawRectangle($border,2,2,$w-5,$h-5)
         $state=$script:KnobStates[$cid]
-        $value=if($state.Known){"$($script:KnobValues[$cid])%"}else{'—'}
+        $value=Get-KnobValueText $cid
         $top="K$([int]$cid.Substring(5)-47)$(if($state.Known -and $state.Muted){' muted'})"
         $feedback=Get-KnobFeedback $cid $chkPickupMode.Checked $chkEditOnly.Checked
+        $feedback=Format-KnobFeedbackForWidth $feedback $w
         $topFont=Get-SurfaceFont $g 'FKnobTop' ($w-6) ([int]($h/7)) 'K1 muted'
-        $valueFont=Get-SurfaceFont $g 'FKnobValue' ($w-6) ([int]($h/5)) '100%'
-        $feedbackFont=Get-SurfaceFont $g 'FKnobFeedback' ($w-6) ([int]($h/6)) 'Waiting'
+        $valueFont=Get-KnobValueFont $g ($w-6) ([int]($h/5)) $value
+        $feedbackFont=Get-SurfaceFont $g 'FKnobFeedback' ($w-6) ([int]($h/6)) $feedback
         $nameFont=Get-SurfaceFont $g 'FKnobName' ($w-8) ([int]($h/6)) 'MASTER'
         $g.DrawString($top,$topFont,$ink,[Drawing.RectangleF]::new(3,3,$w-6,$h*0.18),$script:SfCenter)
         $g.DrawString($value,$valueFont,$ink,[Drawing.RectangleF]::new(3,$h*0.23,$w-6,$h*0.22),$script:SfCenter)

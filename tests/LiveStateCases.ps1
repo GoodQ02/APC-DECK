@@ -79,7 +79,7 @@ Assert-Ui (-not $script:KnobStates['Knob_48'].Known) 'Empty snapshot retained a 
 $script:ProfileMap['Knob_55'].ActionType = 'VolumeApp'
 $script:ProfileMap['Knob_55'].Target = 'fixture-app'
 $null = Sync-KnobObservations
-Assert-Ui ((Get-KnobFeedback 'Knob_55' $true $false) -eq 'No readback') 'App session level falsely represented as endpoint volume.'
+Assert-Ui ((Get-KnobFeedback 'Knob_55' $true $false) -eq 'No session') 'Missing app session falsely represented as endpoint volume.'
 # Show all operational states together at each supported size.
 $script:AudioSnapshot = $script:FixtureSnapshot
 Update-ObservedControls

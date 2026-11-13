@@ -149,3 +149,4 @@ Save-TestFrame 'inspector-long-draft.png'
 . (Join-Path $PSScriptRoot 'WindowLayoutCases.ps1')
 . (Join-Path $PSScriptRoot 'InteractionFeedbackCases.ps1')
 . (Join-Path $PSScriptRoot 'RecoveryCases.ps1')
+. (Join-Path $PSScriptRoot 'AppVolumeCases.ps1')

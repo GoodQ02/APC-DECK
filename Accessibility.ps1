@@ -31,7 +31,7 @@ function Read-SelectedAccessibilityStatus {
     if ($cid.StartsWith('Pad_')) { $message += "Saved state: $($script:PadPresentations[$cid].State). " }
     elseif ($cid.StartsWith('Knob_')) {
         $state = $script:KnobStates[$cid]
-        $message += if ($state.Known) { "Saved device level $($script:KnobValues[$cid]) percent. " } else { "$($state.Status). " }
+        $message += if ($state.PSObject.Properties['IsApp']) { "$($state.Status). $($state.Detail) " } elseif ($state.Known) { "Saved device level $($script:KnobValues[$cid]) percent. " } else { "$($state.Status). " }
         if ($state.Known -and $state.Muted) { $message += 'Muted. ' }
         $message += (Get-KnobFeedback $cid $chkPickupMode.Checked $chkEditOnly.Checked) + '. '
     }

@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [ValidateSet('Panel','Tray','Headless','Snapshot','ResetDefaults','Stop')][string]$Mode = 'Panel',
     [switch]$Minimized,
@@ -190,11 +190,19 @@ if ($OfflinePreview) {
     function Save-ApcProfile { param($ProfileMap) throw 'Offline preview cannot save a real profile.' }
     function Set-AudioVolumeByMapping { param($Mapping, $MidiValue, [switch]$AutoMuteAtZero) throw 'Offline preview cannot change audio.' }
     function Invoke-ApcAction { param($Mapping) throw 'Offline preview cannot run actions.' }
+    function Update-AppVolumeSessions { }
+    function Get-AppVolumeSnapshot { [pscustomobject]@{Sessions=@();Ready=$true;Error='';Revision=0} }
+    function Set-AppSessionVolume { param($Mapping,$Percent,$Pickup,$Physical,$AutoMute) throw 'Offline preview cannot change app audio.' }
 }
 $script:ProfileMap = if ($OfflinePreview) {
     $map = @{}; foreach ($mapping in (New-DefaultApcProfile)) { $map[$mapping.ControlId] = $mapping }; $map
 } else { Load-ApcProfile }
 $script:Drafts = @{}
+if (-not $OfflinePreview) { Initialize-AppVolumeRuntime }
+if (@($script:ProfileMap.Values | Where-Object ActionType -eq 'VolumeApp').Count) { Update-AppVolumeSessions }
+$script:LastAppRevision=-1
+$script:LastAppUiPoll=0L
+$script:LastAppError=''
 $script:DraftFields = @('Label', 'ActionType', 'Target', 'SecondaryTarget', 'LedColor', 'OffLedColor')
 $script:AudioSnapshot           = @(Get-AudioEndpointsSnapshot)
 $script:BtSnapshot              = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
@@ -741,6 +749,7 @@ $knobPaintHandler = {
         $feedback = Get-KnobFeedback $cid $chkPickupMode.Checked $chkEditOnly.Checked
         $cc  = [int]($cid -replace '^Knob_','')
         $kIdx = ($cc - 47)
+        $feedback=Format-KnobFeedbackForWidth $feedback $sender.ClientSize.Width
 
         $w = $sender.ClientSize.Width
         $h = $sender.ClientSize.Height
@@ -759,8 +768,8 @@ $knobPaintHandler = {
 
         $arcColor = if (-not $known) { [Drawing.Color]::FromArgb(148, 163, 184) } elseif ($state.Muted -or $pct -eq 0) { $cRedGlow } elseif ($pct -ge 95) { $cGreenGlow } else { $cCyanSelect }
         $topFont = Get-SurfaceFont $g 'FKnobTop' ($w - 6) ([int]($h / 7)) 'K1 muted'
-        $valueFont = Get-SurfaceFont $g 'FKnobValue' ($w - 6) ([int]($h / 5)) '100%'
-        $feedbackFont = Get-SurfaceFont $g 'FKnobFeedback' ($w - 6) ([int]($h / 6)) 'Waiting'
+        $valueFont = Get-KnobValueFont $g ($w - 6) ([int]($h / 5)) (Get-KnobValueText $cid)
+        $feedbackFont = Get-SurfaceFont $g 'FKnobFeedback' ($w - 6) ([int]($h / 6)) $feedback
         $nameFont = Get-SurfaceFont $g 'FKnobName' ($w - 8) ([int]($h / 6)) 'MASTER'
         # Font metrics reserve non-overlapping value/feedback/name rows before optional dial artwork.
         $topHeight = [math]::Ceiling($topFont.GetHeight($g)) + 2
@@ -818,16 +827,7 @@ $knobPaintHandler = {
 
             $trackPen.Dispose(); $valPen.Dispose(); $capBrush.Dispose(); $capPen.Dispose(); $needlePen.Dispose()
         }
-        if ($w -lt 85) {
-            $feedback = switch ($feedback) {
-                'Awaiting turn' { 'Waiting' }
-                'Disconnected' { 'Offline' }
-                'No readback' { 'Unverified' }
-                'Updating...' { 'Updating' }
-                default { $feedback -replace ' to ', ' ' }
-            }
-        }
-        $pctText = if (-not $known) { '—' } else { "$pct%" }
+        $pctText = Get-KnobValueText $cid
         $pctBrush = [Drawing.SolidBrush]::new($arcColor)
         $g.DrawString("K$kIdx$(if ($known -and $state.Muted -and -not $state.Pending) { ' muted' })", $topFont, [Drawing.Brushes]::Silver, [Drawing.RectangleF]::new(3, 3, $w - 6, $topHeight), $script:SfCenter)
         $g.DrawString($pctText, $valueFont, $pctBrush, [Drawing.RectangleF]::new(3, $valueY, $w - 6, $valueHeight), $script:SfCenter)
@@ -856,12 +856,12 @@ for ($i = 0; $i -lt 8; $i++) {
             if ($chkEditOnly.Checked) { return }
             $kId = [string]$sender.Tag
             if (-not $script:ProfileMap.ContainsKey($kId)) { return }
-            if (-not $script:KnobStates[$kId].Known -and $script:KnobStates[$kId].Status -ne 'No readback') { return }
+            if (-not $script:KnobStates[$kId].Known) { return }
             $cur = if ($script:KnobValues.ContainsKey($kId)) { [int]$script:KnobValues[$kId] } else { 50 }
             $step = if ($e.Delta -gt 0) { 2 } else { -2 }
             $newPct = [Math]::Max(0, [Math]::Min(100, $cur + $step))
             $midiVal = [int][Math]::Round(($newPct / 100.0) * 127.0)
-            $script:KnobValues[$kId] = $newPct
+            if ($script:ProfileMap[$kId].ActionType -ne 'VolumeApp') { $script:KnobValues[$kId] = $newPct }
             $script:LastKnobTurnTick = [Environment]::TickCount64
             $res = Set-AudioVolumeByMapping -Mapping $script:ProfileMap[$kId] -MidiValue $midiVal -AutoMuteAtZero
             Set-KnobCommand $kId ([int][math]::Round((Convert-MidiCcToScalar $midiVal) * 100))
@@ -1264,7 +1264,7 @@ function New-InspectorToggle([string]$text, [bool]$checked, [string]$hint) {
 }
 $chkMidiLearn = New-InspectorToggle 'Follow hardware selection' $true 'MIDI Learn: touching a physical control selects it. Drafts are kept when selection changes.'
 $chkEditOnly = New-InspectorToggle 'Edit mode — pause live actions' $false 'Hardware and mouse-wheel actions are paused. Explicit Test and Mute commands still affect live audio.'
-$chkPickupMode = New-InspectorToggle 'Pickup — prevent volume jumps' $true 'On at startup. Turn to the current Windows volume to take control; the knob waits on either side, including at zero. App volume has no pickup readback.'
+$chkPickupMode = New-InspectorToggle 'Pickup — prevent volume jumps' $true 'On at startup. Turn to the current Windows volume to take control. Each app session catches independently; mixed levels show a range.'
 
 $lblLabel = Add-InspectorLabel 'Label'
 $txtLabel = [Windows.Forms.TextBox]::new()
@@ -1398,7 +1398,7 @@ $rootLayout.Controls.Add($statusBox, 0, 2)
 function Set-StatusBanner([string]$eventText) {
     if ($eventText -match '^(Applied |Reverted |Could not save|Test failed|\[TEST)') { Queue-AccessibilityAnnouncement $eventText }
     if ($PSBoundParameters.ContainsKey('eventText')) { $script:LastStatusEvent = $eventText }
-    if ($eventText -match '^(Could not save mapping:|Test failed:|Device refresh failed:|Observation failed:|Recovered from runtime event:|Applied |\[TEST |Refreshed audio/|Reverted |Reconnected |Reset entire |Balanced |\[ZERO OUT\])') { Record-StatusEvent $eventText }
+    if ($eventText -match '^(Could not save mapping:|Test failed:|Device refresh failed:|Observation failed:|App volume failed:|Recovered from runtime event:|Applied |\[TEST |Refreshed audio/|Reverted |Reconnected |Reset entire |Balanced |\[ZERO OUT\])') { Record-StatusEvent $eventText }
     $isOpen = [GoodCube.ApcDeck.NativeBridge]::IsOpen
     $midiState = if ($isOpen) { 'ONLINE (IN + LED OUT)' } else { 'OFFLINE' }
     $attention = if ($script:RecoveryAttention) { "$script:RecoveryAttention to review · F9  |  " } else { '' }
@@ -1411,6 +1411,7 @@ function Set-StatusBanner([string]$eventText) {
 }
 
 function Update-ObservedControls {
+    if (@($script:ProfileMap.Values | Where-Object ActionType -eq 'VolumeApp').Count) { Update-AppVolumeSessions }
     $script:BtSnapshot = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
     foreach ($changedId in @(Sync-KnobObservations)) {
         Invalidate-ApcControl $changedId
@@ -1430,6 +1431,9 @@ function Validate-InspectorInput {
             $lblValidation.Text = "⚠ Enter chord like Alt+Q, Win+H, Ctrl+Shift+M, or F13"
             $lblValidation.ForeColor = $cAmberGlow
         }
+    } elseif ($act -eq 'VolumeApp') {
+        $lblValidation.Text = 'App sessions across active outputs. Each session catches its own volume; F8 reads details.'
+        $lblValidation.ForeColor = if ($script:UiHighContrast) { [Drawing.SystemColors]::WindowText } else { [Drawing.Color]::FromArgb(148,163,184) }
     } elseif ($act -in @('VolumeDevice','SetDefaultDevice','SwapDevices','MuteToggle','EndpointEnableToggle')) {
         if ($t1 -in @('@DefaultRender', '@DefaultCapture')) {
             $lblValidation.Text = "✓ Dynamic default endpoint ($t1)"
@@ -1546,7 +1550,8 @@ function Update-ControlDescription([string]$cid) {
         $feedback = Get-KnobFeedback $cid $chkPickupMode.Checked $chkEditOnly.Checked
         $detail += "`n$feedback (CW = clockwise; CCW = counterclockwise)"
         $state = $script:KnobStates[$cid]
-        $detail += if ($state.Known) { "`nLevel $($script:KnobValues[$cid]) percent; $($state.Status)" } else { "`n$($state.Status)" }
+        if ($state.PSObject.Properties['IsApp']) { $detail += "`n$($state.Status). $($state.Detail)" }
+        else { $detail += if ($state.Known) { "`nLevel $($script:KnobValues[$cid]) percent; $($state.Status)" } else { "`n$($state.Status)" } }
     }
     $control.AccessibleDescription = $detail + "`nArrows select; Tab changes group; F6 edits; Ctrl+T tests."
     $control.MappingValue = $detail
@@ -1623,7 +1628,8 @@ function Update-InspectorDraftState {
     $btnTest.Enabled = -not $errorText -and $mapping.ActionType -ne 'None'
     $kind = if ($dirty) { 'draft' } else { 'saved' }
     $btnTest.Text = if ($mapping.ControlKind -eq 'Knob') { "Test $kind at 50% volume" } elseif ($script:TextScale -ge 1.5) { "Test $kind action" } else { "Test $kind action  (Ctrl+T)" }
-    $toolTips.SetToolTip($btnTest, 'Runs the displayed mapping without saving it. This deliberate test can affect live audio or run a shortcut, even in Edit mode.')
+    $testHint=if($mapping.ActionType -eq 'VolumeApp'){'Requests 50% on every matching app session across active outputs, bypassing pickup. Wait for readback before repeating. Does not save.'}else{'Runs the displayed mapping without saving it. This deliberate test can affect live audio or run a shortcut, even in Edit mode.'}
+    $toolTips.SetToolTip($btnTest, $testHint)
     $lblDraftState.Text = if ($dirty) { "Unsaved draft · $($script:Drafts.Count) retained" } elseif ($script:Drafts.Count) { "Saved · $($script:Drafts.Count) other drafts retained" } else { 'Saved · no pending changes' }
     $lblDraftState.ForeColor = if ($dirty) { $cAmberGlow } else { $cGreenGlow }
     if ($errorText) { $lblValidation.Text = $errorText; $lblValidation.ForeColor = $cAmberGlow }
@@ -1758,6 +1764,7 @@ $btnSave.Add_Click({
         return
     }
     $script:Drafts.Remove($cid)
+    if ($mapping.ActionType -eq 'VolumeApp' -or $previous.ActionType -eq 'VolumeApp') { Reset-AppVolumePickup }
     # Mapping edits do not require endpoint rediscovery; preserve the existing caches.
     Sync-ApcHardwareLeds -ProfileMap $script:ProfileMap -AudioSnapshot $script:AudioSnapshot -BtSnapshot $script:BtSnapshot
     $null = Update-PadVelocitiesCache
@@ -1785,6 +1792,7 @@ $btnTest.Add_Click({
     if (Get-InspectorError $m) { Update-InspectorDraftState; return }
     try {
         if ($cid.StartsWith('Knob_')) {
+            if ($m.ActionType -eq 'VolumeApp') { Update-AppVolumeSessions }
             $res = Set-AudioVolumeByMapping -Mapping $m -MidiValue 64
             # A draft may target a different device; do not mislabel the saved knob's value.
             if (-not $script:Drafts.ContainsKey($cid)) { $script:KnobPickedUp[$cid] = $false }
@@ -2029,7 +2037,13 @@ $midiTimer.Add_Tick({
             if (-not $chkEditOnly.Checked -and $script:ProfileMap.ContainsKey($cid)) {
                 $m = $script:ProfileMap[$cid]
                 $state = $script:KnobStates[$cid]
-                if (-not $state.Known -and $state.Status -ne 'No readback') {
+                if ($m.ActionType -eq 'VolumeApp') {
+                    $res=Set-AppSessionVolume -Mapping $m -Percent $physPct -Pickup $chkPickupMode.Checked -Physical $true
+                    $lastBanner="[$($m.Label)] $res"
+                    $knobsToRedraw.Add($cid)
+                    continue
+                }
+                if (-not $state.Known) {
                     $lastBanner = "[$($m.Label)] $($state.Status); waiting for audio endpoint."
                     $knobsToRedraw.Add($cid)
                     continue
@@ -2067,6 +2081,16 @@ $midiTimer.Add_Tick({
         }
         if ($lastBanner) {
             Set-StatusBanner $lastBanner
+        }
+        if (([Environment]::TickCount64 - $script:LastAppUiPoll) -ge 100) {
+            $script:LastAppUiPoll=[Environment]::TickCount64
+            $appSnapshot=Get-AppVolumeSnapshot
+            if ($appSnapshot.Revision -ne $script:LastAppRevision) {
+                $script:LastAppRevision=$appSnapshot.Revision
+                foreach($appId in @(Sync-KnobObservations -AppsOnly)) { Invalidate-ApcControl $appId }
+                if ($appSnapshot.Error -and $appSnapshot.Error -cne $script:LastAppError) { Set-StatusBanner "App volume failed: $($appSnapshot.Error)" }
+                $script:LastAppError=$appSnapshot.Error
+            }
         }
     } catch {
         try { Set-StatusBanner "Recovered from runtime event: $($_.Exception.Message)" } catch { }
@@ -2132,6 +2156,7 @@ $syncTimer.Add_Tick({
 })
 
 $refreshKnobFeedback = {
+    Reset-AppVolumePickup
     foreach ($cc in 48..55) {
         $script:KnobPickedUp["Knob_$cc"] = $false
         Invalidate-ApcControl "Knob_$cc"
@@ -2165,6 +2190,7 @@ try {
     [Windows.Forms.Application]::Run($form)
 } finally {
     try { Stop-DeviceRefresh; $deviceRefreshTimer.Dispose() } catch { }
+    try { Stop-AppVolumeSessions } catch { }
     try { $instanceMutex.ReleaseMutex() } catch { }
     try { $instanceMutex.Dispose() } catch { }
     try { $midiTimer.Stop(); $midiTimer.Dispose() } catch { }
