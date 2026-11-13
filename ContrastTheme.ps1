@@ -35,6 +35,7 @@ function Set-ApcContrastTheme([bool]$Enabled) {
     foreach ($cid in @('Trans_91','Trans_93','Trans_98')) { Invalidate-ApcControl $cid }
     Validate-InspectorInput
     Update-InspectorDraftState
+    Set-RecoveryContrast $Enabled
     $form.Invalidate($true)
 }
 

@@ -62,11 +62,16 @@ Test-DispatchCase 'All audio precedes one selection' @('Volume:Knob_48:64','Volu
 Test-DispatchCase 'Edit-only still learns' @('Select:Knob_49') -EditOnly $true
 Test-DispatchCase 'Pickup waits but still learns' @('Select:Knob_49') -Pickup $true
 Test-DispatchCase 'Pickup crossing applies volume' @('Volume:Knob_48:100','Volume:Knob_49:100','Select:Knob_49') -Pickup $true -Previous 70 -MidiValue 100
-Test-DispatchCase 'Zero bypasses pickup' @('Volume:Knob_48:0','Volume:Knob_49:0','Select:Knob_49') -Pickup $true -MidiValue 0
+Test-DispatchCase 'Zero waits for pickup' @('Select:Knob_49') -Pickup $true -MidiValue 0
+Test-DispatchCase 'High starting position waits for pickup' @('Select:Knob_49') -Pickup $true -MidiValue 127
+Test-DispatchCase 'Downward crossing acquires pickup' @('Volume:Knob_48:94','Volume:Knob_49:94','Select:Knob_49') -Pickup $true -Previous 90 -MidiValue 94
+Test-DispatchCase 'Near target within MIDI resolution acquires' @('Volume:Knob_48:95','Volume:Knob_49:95','Select:Knob_49') -Pickup $true -MidiValue 95
+Test-DispatchCase 'Five percent away still waits' @('Select:Knob_49') -Pickup $true -MidiValue 89
+Test-DispatchCase 'Zero still writes after crossing target' @('Volume:Knob_48:0','Volume:Knob_49:0','Select:Knob_49') -Pickup $true -Previous 80 -MidiValue 0
 Test-DispatchCase 'Learn off skips inspector' @('Volume:Knob_48:64','Volume:Knob_49:64') -Learn $false
 Test-DispatchCase 'Hidden window skips inspector' @('Volume:Knob_48:64','Volume:Knob_49:64') -Visible $false
 Test-DispatchCase 'Selected knob skips inspector' @('Volume:Knob_48:64') -Selected 'Knob_48' -Codes @(48)
 Test-DispatchCase 'Unavailable still learns without audio' @('Select:Knob_49') -Known $false -FixtureStatus 'Disconnected'
 Test-DispatchCase 'No readback retains direct app writes' @('Volume:Knob_48:64','Volume:Knob_49:64','Select:Knob_49') -Known $false -FixtureStatus 'No readback' -Pickup $true
 if ($script:KnobStates['Knob_48'].Status -ne 'No readback') { throw 'App write falsely acquired live readback.' }
-Write-Output 'PASS: Knob dispatch ordering, edit-only, pickup, and MIDI Learn (10 cases; no audio writes).'
+Write-Output 'PASS: Knob dispatch ordering, edit-only, bidirectional pickup without zero bypass, and MIDI Learn (15 cases; no audio writes).'

@@ -1264,7 +1264,7 @@ function New-InspectorToggle([string]$text, [bool]$checked, [string]$hint) {
 }
 $chkMidiLearn = New-InspectorToggle 'Follow hardware selection' $true 'MIDI Learn: touching a physical control selects it. Drafts are kept when selection changes.'
 $chkEditOnly = New-InspectorToggle 'Edit mode — pause live actions' $false 'Hardware and mouse-wheel actions are paused. Explicit Test and Mute commands still affect live audio.'
-$chkPickupMode = New-InspectorToggle 'Pickup — prevent volume jumps' $false 'Wait for the physical knob to cross the current volume before applying changes.'
+$chkPickupMode = New-InspectorToggle 'Pickup — prevent volume jumps' $true 'On at startup. Turn to the current Windows volume to take control; the knob waits on either side, including at zero. App volume has no pickup readback.'
 
 $lblLabel = Add-InspectorLabel 'Label'
 $txtLabel = [Windows.Forms.TextBox]::new()
@@ -1393,13 +1393,16 @@ $statusBox.ForeColor = [Drawing.Color]::FromArgb(125, 211, 252)
 $statusBox.BorderStyle = 'None'
 $statusBox.Font = [Drawing.Font]::new('Consolas', 9.2)
 $rootLayout.Controls.Add($statusBox, 0, 2)
+. (Join-Path $PSScriptRoot 'RecoveryEvents.ps1')
 
 function Set-StatusBanner([string]$eventText) {
     if ($eventText -match '^(Applied |Reverted |Could not save|Test failed|\[TEST)') { Queue-AccessibilityAnnouncement $eventText }
     if ($PSBoundParameters.ContainsKey('eventText')) { $script:LastStatusEvent = $eventText }
+    if ($eventText -match '^(Could not save mapping:|Test failed:|Device refresh failed:|Observation failed:|Recovered from runtime event:|Applied |\[TEST |Refreshed audio/|Reverted |Reconnected |Reset entire |Balanced |\[ZERO OUT\])') { Record-StatusEvent $eventText }
     $isOpen = [GoodCube.ApcDeck.NativeBridge]::IsOpen
     $midiState = if ($isOpen) { 'ONLINE (IN + LED OUT)' } else { 'OFFLINE' }
-    $text = "MIDI: $midiState  |  Speaker: $($script:CachedSpeakerSummary)  |  Mic: $($script:CachedMicSummary)`r`nEvent: $(Format-CompactText $script:LastStatusEvent 135)"
+    $attention = if ($script:RecoveryAttention) { "$script:RecoveryAttention to review · F9  |  " } else { '' }
+    $text = "MIDI: $midiState  |  Speaker: $($script:CachedSpeakerSummary)  |  Mic: $($script:CachedMicSummary)`r`n${attention}Event: $(Format-CompactText $script:LastStatusEvent 135)"
     if ($statusBox.Text -cne $text) { $statusBox.Text = $text }
     if ($isOpen -ne $script:LastMidiOpenState) {
         $script:LastMidiOpenState = $isOpen
@@ -1786,6 +1789,7 @@ $btnTest.Add_Click({
             # A draft may target a different device; do not mislabel the saved knob's value.
             if (-not $script:Drafts.ContainsKey($cid)) { $script:KnobPickedUp[$cid] = $false }
         } else { $res = Invoke-ApcAction -Mapping $m }
+        if (Test-RecoveryFailureResult $res) { throw $res }
         $script:AudioSnapshot = @(Get-AudioEndpointsSnapshot)
         $script:BtSnapshot = @(Get-PairedBluetoothDevices -AudioSnapshot $script:AudioSnapshot)
         Update-CachedTelemetrySummaries
@@ -2033,7 +2037,7 @@ $midiTimer.Add_Tick({
                 if ($state.Known -and $chkPickupMode.Checked -and -not $script:KnobPickedUp[$cid]) {
                     $targetPct = $script:KnobValues[$cid]
                     $crossed = ($prevPhys -ge 0) -and (($prevPhys -le $targetPct -and $physPct -ge $targetPct) -or ($prevPhys -ge $targetPct -and $physPct -le $targetPct))
-                    if ([math]::Abs($physPct - $targetPct) -le 5 -or $crossed -or $physPct -eq 0) {
+                    if ([math]::Abs($physPct - $targetPct) -le 1 -or $crossed) {
                         $script:KnobPickedUp[$cid] = $true
                     } else {
                         $dir = if ($physPct -lt $targetPct) { 'Turn CW ->' } else { '<- Turn CCW' }
@@ -2101,6 +2105,7 @@ $syncTimer.Add_Tick({
     } catch {
         $script:CachedSpeakerSummary = 'Unavailable (refresh failed)'
         $script:CachedMicSummary = 'Unavailable (refresh failed)'
+        Set-StatusBanner "Observation failed: $($_.Exception.Message). Press F9 for details or F5 to retry Refresh."
         foreach ($cc in 48..55) {
             $cid = "Knob_$cc"
             $state = $script:KnobStates[$cid]

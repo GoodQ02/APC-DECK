@@ -21,6 +21,7 @@ function Invoke-ApcAction {
     return 'Recorded action'
 }
 function Assert-Ui([bool]$condition, [string]$message) { if (-not $condition) { throw $message } }
+Assert-Ui $chkPickupMode.Checked 'Pickup protection must be enabled at startup.'
 function Save-TestFrame([string]$name) {
     if (-not $env:APC_DECK_PREVIEW_DIRECTORY) { return }
     $null = New-Item -ItemType Directory -Path $env:APC_DECK_PREVIEW_DIRECTORY -Force
@@ -147,3 +148,4 @@ Save-TestFrame 'inspector-long-draft.png'
 
 . (Join-Path $PSScriptRoot 'WindowLayoutCases.ps1')
 . (Join-Path $PSScriptRoot 'InteractionFeedbackCases.ps1')
+. (Join-Path $PSScriptRoot 'RecoveryCases.ps1')

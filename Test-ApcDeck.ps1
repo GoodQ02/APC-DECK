@@ -1,4 +1,4 @@
-﻿Set-StrictMode -Version Latest
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'ApcDeck.psm1') -Force -DisableNameChecking
@@ -39,7 +39,9 @@ if (-not $chord3 -or $chord3.Modifiers.Count -ne 0 -or $chord3.MainKey -ne 0x7C)
     throw 'F13 hotkey parse failed.'
 }
 
-# 3. Verify LED velocity state calculation & custom color overrides
+# 3. Verify LED rules against deterministic defaults, independent of user mappings/colors.
+$ledFixtureMap = @{}
+foreach ($mapping in (New-DefaultApcProfile)) { $ledFixtureMap[$mapping.ControlId] = $mapping }
 $fakeAudio = @(
     [pscustomobject]@{ ID='dev1'; FriendlyName='COMMAND_CENTER (Realtek)'; Flow='Render'; State='Active'; IsDefault=$true; VolumePct=75; Muted=$false },
     [pscustomobject]@{ ID='dev2'; FriendlyName='VOICE_CUBE (Realtek)'; Flow='Render'; State='Active'; IsDefault=$false; VolumePct=65; Muted=$true },
@@ -50,22 +52,22 @@ $fakeBt = @(
     [pscustomobject]@{ Name='RB Meta 01JY'; DeviceId='bt2'; Status='Disconnected' }
 )
 
-if ((Get-PadLedVelocity -Mapping $profileMap['Pad_32'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 1) {
+if ((Get-PadLedVelocity -Mapping $ledFixtureMap['Pad_32'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 1) {
     throw 'Expected active default device pad (Pad_32) LED velocity to be 1 (Solid Green).'
 }
-if ((Get-PadLedVelocity -Mapping $profileMap['Pad_33'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 5) {
+if ((Get-PadLedVelocity -Mapping $ledFixtureMap['Pad_33'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 5) {
     throw 'Expected standby device pad (Pad_33) LED velocity to be 5 (Solid Amber).'
 }
-if ((Get-PadLedVelocity -Mapping $profileMap['Pad_26'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 3) {
+if ((Get-PadLedVelocity -Mapping $ledFixtureMap['Pad_26'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 3) {
     throw 'Expected muted device pad (Pad_26) LED velocity to be 3 (Solid Red).'
 }
-if ((Get-PadLedVelocity -Mapping $profileMap['Pad_20'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 3) {
+if ((Get-PadLedVelocity -Mapping $ledFixtureMap['Pad_20'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 3) {
     throw 'Expected disabled endpoint pad (Pad_20) LED velocity to be 3 (Solid Red).'
 }
-if ((Get-PadLedVelocity -Mapping $profileMap['Pad_8'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 1) {
+if ((Get-PadLedVelocity -Mapping $ledFixtureMap['Pad_8'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 1) {
     throw 'Expected connected Bluetooth pad (Pad_8) LED velocity to be 1 (Solid Green).'
 }
-if ((Get-PadLedVelocity -Mapping $profileMap['Pad_9'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 3) {
+if ((Get-PadLedVelocity -Mapping $ledFixtureMap['Pad_9'] -AudioSnapshot $fakeAudio -BtSnapshot $fakeBt) -ne 3) {
     throw 'Expected disconnected Bluetooth pad (Pad_9) LED velocity to be 3 (Solid Red).'
 }
 

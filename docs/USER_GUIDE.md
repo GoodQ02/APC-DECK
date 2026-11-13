@@ -40,6 +40,7 @@ apc-deck -Mode Stop
   - `Ctrl+S` — **Apply the selected draft**
   - `Ctrl+T` — **Test the displayed draft without saving**
   - `F5` — **Refresh Devices & Sync LEDs**
+  - `F9` — **Recent events and recovery options**
   - `F8` — **Read selected status** through a screen reader that handles Windows accessibility notifications (also under **More actions…**)
   - `Right-Click` on any pad, button, knob, or piano key — **Select & Test Action Immediately**
 
@@ -130,7 +131,7 @@ The inspector keeps the selected control and saved status at the top. **Follow h
 ### Live volume and pickup feedback
 
 - Knobs and the speaker/microphone footer reconcile with Windows on the existing **5-second refresh**, including external volume/mute changes and default-device switches. Refresh waits while a knob was turned in the last 800 ms; F5 requests an immediate refresh.
-- A changed volume, mute state, or endpoint re-arms pickup. Each tile shows **Awaiting turn**, **CW to 42%**, **CCW to 42%**, or **In sync**. CW means clockwise; CCW means counterclockwise. The zero-stop safety bypass remains available for reachable endpoints.
+- A changed volume, mute state, or endpoint re-arms pickup. Each tile shows **Awaiting turn**, **CW to 42%**, **CCW to 42%**, or **In sync**. CW means clockwise; CCW means counterclockwise. Pickup starts enabled and waits on either side of the target, including at zero. It acquires within one percentage point or when crossing the observed level.
 - **Updating...** identifies a commanded level awaiting readback. **Muted**, **Disconnected**, **Disabled**, and **Unavailable** are distinct from zero volume. Unknown levels show a dash instead of an invented percentage. Refresh failure marks the state unavailable until a successful refresh.
 - At compact sizes, tiles shorten feedback and omit the dial artwork to keep numbers and guidance readable. Hover for the full status, saved label, and target; hardware positions do not change.
 - Application-volume mappings have no session-volume observer yet. They show **No readback** (compact: **Unverified**) and use direct writes; endpoint pickup cannot validate an app session level.
@@ -155,7 +156,7 @@ APC-DECK includes dedicated signal conditioning and caching for the 8 hardware p
 
 ### Clean `0%` Mute Floor & `100%` Ceiling Deadzones
 - Analog MIDI potentiometers can jitter between `CC 0` and `CC 1` at the bottom stop, or `CC 126` and `CC 127` at the top stop.
-- APC-DECK clamps:
+- After pickup is acquired (or with pickup disabled), APC-DECK clamps:
   - **`CC <= 1` -> `0%` (`0.0`)** and automatically **mutes** the target Windows audio endpoint (`Mute = $true`) so turning a knob fully counter-clockwise guarantees complete silence.
   - **`CC >= 126` -> `100%` (`1.0`)** and ensures the endpoint is unmuted.
   - Any movement above `CC 1` automatically unmutes the endpoint and scales linearly from `1%` to `99%`.
@@ -166,6 +167,16 @@ APC-DECK includes dedicated signal conditioning and caching for the 8 hardware p
 ### 1-Click `Zero-Out Selected Knob / Device (0% Mute)` Button
 - In the right-hand Inspector, choose **More actions… → Mute saved device (0%)** to immediately set the selected knob or audio device button to `0%` and mute it in Windows.
 
-### Optional `Knob Soft-Takeover (Pickup mode — prevent jumps)`
+### `Pickup — prevent volume jumps` (enabled at startup)
 - Located at the start of the inspector's scrollable fields (**Pickup — prevent volume jumps**).
 - When enabled, if a physical knob's position does not match the current Windows volume (for example, right after boot or after changing volume in Windows), turning the knob will **not** cause a sudden volume jump—it waits until the physical knob crosses ("picks up") the current Windows volume level before locking on.
+- The zero/mute floor above applies after pickup is acquired, or when pickup is disabled. **Mute saved device (0%)** remains an explicit immediate mute command. Unchecking Pickup opts into direct control for this session; startup always restores pickup protection.
+- Windows owns the actual endpoint volume; APC-DECK reads it rather than restoring a remembered physical knob position. Physical position is unknown until the knob sends a turn. Marked knob caps help show position, but cannot track software volume changes. This pass does not add a Windows volume popup.
+
+### Recent events and recovery
+
+- Open **More actions → Recent events**, or press **F9**. The separate, modeless window keeps the last 50 operation results/errors for this running session. Routine selections and knob turns are omitted. Unresolved failures take priority over successful activity within that cap; identical consecutive failures coalesce with an occurrence count. History resets when the app exits.
+- A **to review · F9** reminder stays in the footer after a failure, even when later activity replaces the last-action text. Select an event to read/copy its complete details and next step. **Mark reviewed** clears attention without deleting the entry or claiming recovery. A later failure needs review again.
+- **Retry Refresh** uses the existing background discovery and single-flight protection. If audio/Bluetooth updates but MIDI is still offline, the result says so and offers another retry.
+- **Review / retry Apply** returns to that control's current retained draft. Review it and press Apply. **Review / retry Test** also requires the existing Test button: an action may already have run before feedback failed, so inspect device state first. Knob Test sets its target to 50%. Neither recovery option replays an old mapping or automatically runs an audio/shortcut action.
+- The list and selectable details support keyboard navigation, Escape to close, the current text scale, and Windows high contrast. Successful Apply/Test/explicit Refresh resolves matching earlier failures; unrelated successes do not dismiss them.

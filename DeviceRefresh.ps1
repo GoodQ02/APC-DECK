@@ -28,7 +28,10 @@ function Stop-DeviceRefresh {
                 Remove-Item -LiteralPath $job.Path -Force -ErrorAction SilentlyContinue
             }
         }
-    } finally { $btnRefresh.Enabled = $true }
+    } finally {
+        $btnRefresh.Enabled = $true
+        if ($script:EventsWindow -and -not $script:EventsWindow.IsDisposed -and $script:EventsWindow.Visible) { Update-RecentEventDetails }
+    }
 }
 
 function Start-DeviceRefresh {
@@ -73,7 +76,11 @@ function Complete-DeviceRefresh {
         Populate-TargetDropdowns ([string]$cmbAction.SelectedItem)
         Update-InspectorDraftState
         $headerPanel.Invalidate()
-        Set-StatusBanner 'Refreshed audio/Bluetooth endpoints and synced physical APC Key 25 LEDs.'
+        if (-not $OfflinePreview -and -not [GoodCube.ApcDeck.NativeBridge]::IsOpen) {
+            Set-StatusBanner 'Device refresh failed: Audio/Bluetooth updated, but the APC Key 25 is still offline. Check its USB connection and other MIDI apps, then press F5 to retry.'
+        } else {
+            Set-StatusBanner 'Refreshed audio/Bluetooth endpoints and synced physical APC Key 25 LEDs.'
+        }
     } catch {
         Set-StatusBanner "Device refresh failed: $($_.Exception.Message). Press F5 to retry."
     }
